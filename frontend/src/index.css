@@ -35,4 +35,55 @@
   .focus-ring {
     @apply focus:outline-none focus:ring-1 focus:ring-ink/20 focus:ring-offset-1 focus:ring-offset-ink-bg;
   }
+
+  /* 设置面板展开/收起动画 */
+  .settings-panel-enter {
+    animation: slide-down 250ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .settings-panel-exit {
+    animation: slide-up 200ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  }
+
+  /* 详情面板滑入 */
+  .detail-slide-in {
+    animation: slide-in-right 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .detail-slide-out {
+    animation: slide-out-right 250ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  }
+
+  /* 图片卡片淡入 */
+  .card-fade-in {
+    animation: fade-scale-in 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  /* 操作按钮弹性出现 */
+  .btn-bounce-in {
+    animation: bounce-in 350ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+}
+
+@keyframes slide-down {
+  from { opacity: 0; transform: translateY(-8px); max-height: 0; }
+  to   { opacity: 1; transform: translateY(0); max-height: 800px; }
+}
+@keyframes slide-up {
+  from { opacity: 1; transform: translateY(0); max-height: 800px; }
+  to   { opacity: 0; transform: translateY(-8px); max-height: 0; }
+}
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes slide-out-right {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(24px); }
+}
+@keyframes fade-scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes bounce-in {
+  from { opacity: 0; transform: scale(0.5); }
+  to   { opacity: 1; transform: scale(1); }
 }

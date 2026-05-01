@@ -150,7 +150,7 @@ export function ImageDetail({
   ].filter(Boolean) as [string, string][];
 
   return (
-    <aside className="w-[400px] min-w-[400px] h-screen flex flex-col bg-ink-bg border-l border-ink-line overflow-y-auto">
+    <aside className="w-[400px] min-w-[400px] h-screen flex flex-col bg-ink-bg border-l border-ink-line overflow-y-auto detail-slide-in">
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-ink-line">
         <h3 className="font-display font-bold text-sm text-ink uppercase tracking-wider">{t.detail.imageDetail}</h3>
@@ -172,13 +172,14 @@ export function ImageDetail({
             setPreviewOffset({ x: 0, y: 0 });
             setIsPreviewOpen(true);
           }}
-          className="block w-full rounded-card overflow-hidden border border-ink-line cursor-zoom-in bg-ink-surface"
+          className="block w-full rounded-card overflow-hidden border border-ink-line cursor-zoom-in bg-ink-surface transition-all duration-200 hover:border-ink-muted hover:shadow-sm"
           title={t.detail.previewOriginal}
         >
           <img
             src={imgSrc}
             alt={image.file_name}
-            className="w-full h-auto"
+            className="w-full h-auto transition-transform duration-300 ease-out hover:scale-[1.01]"
+            style={{ animation: 'fade-scale-in 350ms cubic-bezier(0.16, 1, 0.3, 1) both' }}
           />
         </button>
       </div>

@@ -83,7 +83,8 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
           <img
             src={imgSrc}
             alt={image.file_name}
-            className="w-full h-full object-cover object-top transition-transform duration-500 group-hover:scale-[1.02]"
+            className="w-full h-full object-cover object-top transition-transform duration-500 ease-out group-hover:scale-[1.03]"
+            style={{ animation: 'fade-scale-in 400ms cubic-bezier(0.16, 1, 0.3, 1) both' }}
             onError={e => {
               (e.target as HTMLImageElement).style.display = 'none'; // 加载失败时隐藏
             }}
@@ -99,7 +100,7 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
         </span>
 
         {/* 右上角操作按钮：收藏 + 隐藏 */}
-        <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+        <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-300 ease-out translate-y-1 group-hover:translate-y-0">
           {/* 收藏按钮 */}
           <button
             onClick={(e) => {
@@ -107,8 +108,8 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
               onToggleFavorite(image.id);
             }}
             className={cn(
-              'w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200',
-              'bg-white/90 backdrop-blur-sm hover:bg-white',
+              'w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200 ease-out',
+              'bg-white/90 backdrop-blur-sm hover:bg-white hover:scale-110 active:scale-95',
               image.is_favorite && '!opacity-100'
             )}
           >
@@ -133,7 +134,7 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
                 onHideImage(image.id);
               }}
               title="标记为 NSFW 并隐藏"
-              className="w-7 h-7 rounded-full flex items-center justify-center bg-white/90 backdrop-blur-sm hover:bg-red-50 transition-all duration-200"
+              className="w-7 h-7 rounded-full flex items-center justify-center bg-white/90 backdrop-blur-sm hover:bg-red-50 hover:scale-110 active:scale-95 transition-all duration-200 ease-out"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A8A8A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
