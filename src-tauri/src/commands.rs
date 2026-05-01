@@ -11,7 +11,7 @@ use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use walkdir::WalkDir;
 
 /// 图片导入结果统计
@@ -682,7 +682,7 @@ pub fn export_gallery(dest_path: String) -> Result<String, String> {
 
     let file = fs::File::create(&dest).map_err(|e| format!("创建导出文件失败: {}", e))?;
     let mut zip = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default()
+    let options = zip::write::FileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
 
     // 收集要打包的文件：config.json、gallery.db、images/*、thumbnails/*
@@ -799,9 +799,9 @@ pub fn import_gallery(app: AppHandle, zip_path: String) -> Result<String, String
     }
 
     // 重新初始化数据库连接，使导入的数据立即可用
-    match db::Database::new() {
+    match crate::db::Database::new() {
         Ok(new_db) => {
-            let mut db_lock = app.state::<AppState>().db.lock().map_err(|e| e.to_string())?;
+            let mut db_lock = app.state::<AppState>().db.lock().map_err(|e: String| e.to_string())?;
             *db_lock = new_db;
         }
         Err(e) => return Err(format!("导入文件已恢复，但重新加载数据库失败: {}", e)),
