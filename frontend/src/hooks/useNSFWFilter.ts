@@ -7,6 +7,9 @@ import { parseMetadata } from '../lib/utils';
 
 /** localStorage 存储键：NSFW 标签列表 */
 const STORAGE_KEY = 'nsfwTags';
+/** localStorage 存储键：手动隐藏的图片 ID 列表 */
+const HIDDEN_IDS_KEY = 'nsfwHiddenImageIds';
+
 /** localStorage 存储键：是否隐藏 NSFW */
 const HIDE_KEY = 'hideNSFW';
 
@@ -22,6 +25,7 @@ const DEFAULT_NSFW_TAGS = [
 
 /** 包含提示词信息的图片接口（最小化约束） */
 interface PromptLikeImage {
+  id: number;
   prompt?: string | null;
   metadata_json?: string | null;
 }
@@ -106,6 +110,14 @@ export function useNSFWFilter() {
   const [hideNSFW, setHideNSFW] = useState(() => localStorage.getItem(HIDE_KEY) === 'true');
   // 从 localStorage 恢复（或初始化）NSFW 标签集合
   const [nsfwTags, setNsfwTags] = useState<Set<string>>(loadNSFWTags);
+  // 手动隐藏的图片 ID 集合
+  const [hiddenImageIds, setHiddenImageIds] = useState<Set<number>>(() => {
+    try {
+      const stored = localStorage.getItem(HIDDEN_IDS_KEY);
+      if (stored) return new Set(JSON.parse(stored));
+    } catch {}
+    return new Set();
+  });
 
   // 切换 NSFW 过滤开关并持久化
   const toggleNSFW = useCallback(() => {
@@ -153,11 +165,39 @@ export function useNSFWFilter() {
     });
   }, []);
 
-  /** 过滤图片数组：开启 NSFW 过滤时移除匹配的图片 */
+  /** 过滤图片数组：开启 NSFW 过滤时移除匹配的图片，始终移除手动隐藏的图片 */
   const filterImages = useCallback(<T extends PromptLikeImage>(images: T[]): T[] => {
-    if (!hideNSFW) return images;
-    return images.filter(img => !isNSFW(img));
-  }, [hideNSFW, isNSFW]);
+    return images.filter(img => {
+      // 手动隐藏的图片始终过滤
+      if (hiddenImageIds.has(img.id)) return false;
+      // 开启 NSFW 过滤时，匹配标签的图片也过滤
+      if (hideNSFW && isNSFW(img)) return false;
+      return true;
+    });
+  }, [hideNSFW, isNSFW, hiddenImageIds]);
+
+  /** 手动标记图片为 NSFW（按 ID 隐藏） */
+  const hideImage = useCallback((id: number) => {
+    setHiddenImageIds(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      localStorage.setItem(HIDDEN_IDS_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
+
+  /** 取消手动隐藏 */
+  const unhideImage = useCallback((id: number) => {
+    setHiddenImageIds(prev => {
+      const next = new Set(prev);
+      next.delete(id);
+      localStorage.setItem(HIDDEN_IDS_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
+
+  /** 判断图片是否被手动隐藏 */
+  const isImageHidden = useCallback((id: number) => hiddenImageIds.has(id), [hiddenImageIds]);
 
   return {
     hideNSFW,
@@ -166,5 +206,8 @@ export function useNSFWFilter() {
     addNSFWTag,
     removeNSFWTag,
     filterImages,
+    hideImage,
+    unhideImage,
+    isImageHidden,
   };
 }
