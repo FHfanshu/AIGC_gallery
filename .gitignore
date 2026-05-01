@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+frontend/dist/
+src-tauri/target/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Gallery data (user content)
+src-tauri/target/debug/gallery-data/
+src-tauri/target/release/gallery-data/
+gallery-data/
+
+# Rust
+src-tauri/Cargo.lock
+
+# Tauri generated
+src-tauri/gen/schemas/
