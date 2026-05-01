@@ -4,6 +4,34 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { CivitaiBaseUrl, CivitaiKeyStatus, CivitaiLookupResult, ImageRecord, ImageStats, ImportResult, ImportStrategy, StorageConfig } from '../types';
 
+const imageBase64Cache = new Map<string, Promise<string>>();
+
+function imageBase64Key(imageId: number, useThumbnail: boolean) {
+  return `${imageId}:${useThumbnail ? 'thumb' : 'full'}`;
+}
+
+function getCachedImageBase64(imageId: number, useThumbnail: boolean) {
+  const key = imageBase64Key(imageId, useThumbnail);
+  const cached = imageBase64Cache.get(key);
+  if (cached) return cached;
+
+  // 原图 Base64 体积较大，只保留最近 6 张预取/打开过的原图，避免长时间浏览占用过多内存。
+  if (!useThumbnail) {
+    const fullKeys = Array.from(imageBase64Cache.keys()).filter(k => k.endsWith(':full'));
+    for (const oldKey of fullKeys.slice(0, Math.max(0, fullKeys.length - 5))) {
+      imageBase64Cache.delete(oldKey);
+    }
+  }
+
+  const promise = invoke<string>('get_image_base64', { imageId, useThumbnail })
+    .catch(error => {
+      imageBase64Cache.delete(key);
+      throw error;
+    });
+  imageBase64Cache.set(key, promise);
+  return promise;
+}
+
 /** api — 所有 Tauri IPC 调用的统一入口对象 */
 export const api = {
   /** 分页获取图片列表，支持关键词搜索 */
@@ -58,9 +86,14 @@ export const api = {
   setStorageDir: (dir: string | null, importStrategy?: ImportStrategy, civitaiBaseUrl?: CivitaiBaseUrl) =>
     invoke<StorageConfig>('set_storage_dir', { dir, importStrategy: importStrategy || null, civitaiBaseUrl: civitaiBaseUrl || null }),
 
-  /** 获取图片的 Base64 编码数据，用于前端显示 */
+  /** 获取图片的 Base64 编码数据，用于前端显示；同一图片请求会复用缓存/进行中的 Promise */
   getImageBase64: (imageId: number, useThumbnail = true) =>
-    invoke<string>('get_image_base64', { imageId, useThumbnail }),
+    getCachedImageBase64(imageId, useThumbnail),
+
+  /** 鼠标悬浮缩略图时预取原图，降低打开详情页时的等待感 */
+  prefetchFullImage: (imageId: number) => {
+    void getCachedImageBase64(imageId, false).catch(() => {});
+  },
 
   /** 查询系统凭据库里是否保存了 Civitai API Key */
   getCivitaiKeyStatus: () =>

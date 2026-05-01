@@ -72,6 +72,8 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
           ? 'border-ink ring-1 ring-ink'
           : 'border-ink-line hover:border-ink-muted'
       )}
+      onMouseEnter={() => api.prefetchFullImage(image.id)}
+      onFocus={() => api.prefetchFullImage(image.id)}
       onClick={onClick}
     >
       {/* 图片区域 */}
