@@ -81,7 +81,7 @@ export const en = {
     lookingUp: 'Looking up...',
     notFoundOnCivitai: 'Not found on Civitai.',
     loraHash: 'LoRA / Hash',
-    previewHelp: 'Ctrl/Alt + Wheel · Drag ·',
+    previewHelp: 'Wheel to zoom · Drag to pan ·',
     software: 'Software',
     request: 'Request',
     generationTime: 'Generation Time',

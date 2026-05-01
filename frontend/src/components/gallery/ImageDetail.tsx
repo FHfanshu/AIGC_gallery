@@ -3,6 +3,7 @@
  * 以侧边栏形式展示选中图片的预览、文件信息、提示词、生成参数，支持编辑和复制
  */
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Button, Card, Textarea } from '../ui';
 import { parseMetadata, getSourceLabel, truncate } from '../../lib/utils';
 import { api } from '../../lib/tauri';
@@ -99,9 +100,19 @@ export function ImageDetail({
     }
   };
 
+  // 预览层打开时锁住底层页面滚动，避免滚轮缩放同时滚动 gallery / 详情面板。
+  useEffect(() => {
+    if (!isPreviewOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isPreviewOpen]);
+
   const handlePreviewWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    if (!event.ctrlKey && !event.altKey) return;
     event.preventDefault();
+    event.stopPropagation();
     setPreviewScale(prev => {
       const next = event.deltaY < 0 ? prev * 1.12 : prev / 1.12;
       return Math.min(8, Math.max(0.2, next));
@@ -124,6 +135,7 @@ export function ImageDetail({
   const handlePreviewPointerMove = (event: React.PointerEvent<HTMLImageElement>) => {
     if (!dragRef.current.active) return;
     event.preventDefault();
+    event.stopPropagation();
     const dx = event.clientX - dragRef.current.x;
     const dy = event.clientY - dragRef.current.y;
     setPreviewOffset({
@@ -134,6 +146,7 @@ export function ImageDetail({
 
   const handlePreviewPointerUp = (event: React.PointerEvent<HTMLImageElement>) => {
     dragRef.current.active = false;
+    event.stopPropagation();
     event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
@@ -440,18 +453,18 @@ export function ImageDetail({
         </Button>
       </div>
 
-      {isPreviewOpen && (
+      {isPreviewOpen && createPortal(
         <div
-          className="fixed inset-0 z-[100] bg-black/90 overflow-hidden cursor-zoom-out"
+          className="fixed inset-0 z-[1000] bg-black/95 overflow-hidden cursor-zoom-out overscroll-contain touch-none"
           onClick={() => setIsPreviewOpen(false)}
           onWheel={handlePreviewWheel}
         >
-          <div className="min-w-full min-h-full flex items-center justify-center p-6">
+          <div className="w-screen h-screen flex items-center justify-center p-6 overflow-hidden">
             <img
               src={imgSrc}
               alt={image.file_name}
               className="max-w-full max-h-full object-contain select-none transition-transform duration-75 ease-out cursor-grab active:cursor-grabbing"
-              style={{ transform: `translate(${previewOffset.x}px, ${previewOffset.y}px) scale(${previewScale})` }}
+              style={{ transform: `translate3d(${previewOffset.x}px, ${previewOffset.y}px, 0) scale(${previewScale})` }}
               draggable={false}
               onClick={event => event.stopPropagation()}
               onPointerDown={handlePreviewPointerDown}
@@ -463,7 +476,8 @@ export function ImageDetail({
           <div className="fixed left-1/2 bottom-5 -translate-x-1/2 px-3 py-1.5 rounded-full bg-black/60 text-white text-xs tabular-nums pointer-events-none">
             {t.detail.previewHelp} {Math.round(previewScale * 100)}%
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </aside>
   );

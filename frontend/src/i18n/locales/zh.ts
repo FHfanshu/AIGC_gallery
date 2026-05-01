@@ -82,7 +82,7 @@ export const zh: Translations = {
     lookingUp: '查询中...',
     notFoundOnCivitai: 'Civitai 未找到。',
     loraHash: 'LoRA / 哈希',
-    previewHelp: 'Ctrl/Alt + 滚轮 · 拖拽 ·',
+    previewHelp: '滚轮缩放 · 拖拽平移 ·',
     software: '软件',
     request: '请求类型',
     generationTime: '生成耗时',
