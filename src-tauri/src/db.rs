@@ -375,7 +375,7 @@ impl Database {
                     OR i.negative_prompt LIKE ?2
                     OR json_extract(i.metadata_json, '$.characters') LIKE ?2
                     OR json_extract(i.metadata_json, '$.model') LIKE ?2
-                 ORDER BY i.created_at DESC LIMIT ?3 OFFSET ?4"
+                 ORDER BY i.created_at DESC, i.id DESC LIMIT ?3 OFFSET ?4"
             ).map_err(|e| e.to_string())?;
 
             let rows = stmt.query_map(params![fts_query, pattern, limit, offset], |row| {
@@ -393,7 +393,7 @@ impl Database {
                     CASE WHEN f.image_id IS NOT NULL THEN 1 ELSE 0 END as is_favorite
              FROM images i
              LEFT JOIN favorites f ON i.id = f.image_id
-             ORDER BY i.created_at DESC LIMIT ?1 OFFSET ?2"
+             ORDER BY i.created_at DESC, i.id DESC LIMIT ?1 OFFSET ?2"
         ).map_err(|e| e.to_string())?;
 
         let rows = stmt.query_map(params![limit, offset], |row| {
@@ -434,7 +434,7 @@ impl Database {
              JOIN tags t ON it.tag_id = t.id
              LEFT JOIN favorites f ON i.id = f.image_id
              WHERE t.name = ?1
-             ORDER BY i.created_at DESC LIMIT ?2 OFFSET ?3"
+             ORDER BY i.created_at DESC, i.id DESC LIMIT ?2 OFFSET ?3"
         ).map_err(|e| e.to_string())?;
 
         let rows = stmt.query_map(params![tag_name, limit, offset], |row| {
@@ -593,7 +593,7 @@ impl Database {
                     1 as is_favorite
              FROM images i
              INNER JOIN favorites f ON i.id = f.image_id
-             ORDER BY f.created_at DESC LIMIT ?1 OFFSET ?2"
+             ORDER BY f.created_at DESC, i.id DESC LIMIT ?1 OFFSET ?2"
         ).map_err(|e| e.to_string())?;
 
         let rows = stmt.query_map(params![limit, offset], |row| {

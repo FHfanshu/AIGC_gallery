@@ -26,15 +26,31 @@ export function useGallery() {
 
   const searchQueryRef = useRef(searchQuery);  // 搜索关键词的 ref 副本，避免闭包过期
   const offsetRef = useRef(0);                 // 当前分页偏移量
+  const appendLoadingRef = useRef(false);      // 追加加载同步锁，防止同一 offset 被并发请求
+  const resetTokenRef = useRef(0);             // 重置加载版本号，避免旧请求覆盖新列表
 
   // 保持 searchQueryRef 与最新 searchQuery 同步
   useEffect(() => { searchQueryRef.current = searchQuery; }, [searchQuery]);
+
+  // 按图片 id 去重，防止分页边界或并发请求造成重复展示。
+  const uniqueImagesById = useCallback((items: ImageRecord[]) => {
+    const seen = new Set<number>();
+    return items.filter(item => {
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
+  }, []);
 
   /**
    * 加载图片列表
    * @param reset - true 表示重置列表（搜索/刷新），false 表示追加加载（分页）
    */
   const loadImages = useCallback(async (reset = true) => {
+    if (!reset && appendLoadingRef.current) return;
+    if (!reset) appendLoadingRef.current = true;
+
+    const token = reset ? ++resetTokenRef.current : resetTokenRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -42,21 +58,26 @@ export function useGallery() {
       const off = reset ? 0 : offsetRef.current;  // 重置时从偏移量 0 开始
       const sq = searchQueryRef.current;           // 使用 ref 保证拿到最新搜索词
       const imgs = await api.getImages(off, pageLimit, sq);
+
+      // 如果重置请求期间又发起了新的重置，旧响应直接丢弃，避免覆盖新列表。
+      if (reset && token !== resetTokenRef.current) return;
+
       if (reset) {
-        setImages(imgs);               // 重置：替换整个列表
-        offsetRef.current = pageLimit;
+        setImages(uniqueImagesById(imgs)); // 重置：替换整个列表并去重
+        offsetRef.current = imgs.length;
       } else {
-        setImages(prev => [...prev, ...imgs]);  // 追加：拼接到已有列表末尾
-        offsetRef.current += pageLimit;
+        setImages(prev => uniqueImagesById([...prev, ...imgs])); // 追加：拼接并按 id 去重
+        offsetRef.current += imgs.length;
       }
       // 如果返回数量不足一页，说明没有更多数据了
       setHasMore(imgs.length === pageLimit);
     } catch (e) {
       setError(String(e));
     } finally {
+      if (!reset) appendLoadingRef.current = false;
       setLoading(false);
     }
-  }, [limit]);
+  }, [limit, uniqueImagesById]);
 
   // 防抖处理搜索请求，避免输入时频繁调用接口
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
