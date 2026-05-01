@@ -54,7 +54,7 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
         loadImage();
         observer.disconnect();
       }
-    }, { root: null, rootMargin: '600px 0px', threshold: 0.01 });
+    }, { root: null, rootMargin: '900px 0px', threshold: 0.01 });
     observer.observe(el);
 
     return () => {

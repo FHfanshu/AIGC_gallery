@@ -114,8 +114,8 @@ pub fn parse_png_metadata(path: &Path) -> Result<ImageMetadata, String> {
                     }
                 }
             }
-        } else if chunk_type == "caBX" || chunk_type == "caBL" || chunk_type == "IDAT" {
-            // C2PA 专用 chunk（caBX/caBL）或图像数据（IDAT），扫描前 8KB 检测 C2PA 标记
+        } else if chunk_type != "IDAT" && chunk_type != "IEND" {
+            // 扫描所有非图像数据、非结束标记的 chunk，覆盖更多 C2PA/JUMBF 实现
             let scan_len = data.len().min(8192);
             c2pa_raw.extend_from_slice(&data[..scan_len]);
         }
@@ -237,61 +237,80 @@ fn parse_a1111_params(params_str: &str) -> HashMap<String, String> {
 /// - `KSampler` / `KSamplerAdvanced`：提取步数、CFG、种子、采样器
 /// - `CheckpointLoaderSimple` / `UNETLoader`：提取模型名称
 fn parse_comfyui_metadata(raw: &HashMap<String, String>) -> ImageMetadata {
-    let mut meta = ImageMetadata::default();
-    meta.source = "comfyui".to_string();
-    meta.raw = raw.clone();
+    let mut meta = ImageMetadata {
+        source: "comfyui".to_string(),
+        raw: raw.clone(),
+        ..Default::default()
+    };
 
-    if let Some(prompt_str) = raw.get("prompt") {
-        if let Ok(workflow) = serde_json::from_str::<serde_json::Value>(prompt_str) {
-            if let Some(obj) = workflow.as_object() {
-                for (_key, node) in obj {
-                    if let Some(class_type) = node.get("class_type").and_then(|v| v.as_str()) {
-                        if let Some(inputs) = node.get("inputs") {
-                            match class_type {
-                                "CLIPTextEncode" => {
-                                    if let Some(text) = inputs.get("text").and_then(|v| v.as_str()) {
-                                        // 启发式：第一个 CLIP 节点为正向，第二个为反向
-                                        if meta.prompt.is_empty() {
-                                            meta.prompt = text.to_string();
-                                        } else {
-                                            meta.negative_prompt = text.to_string();
-                                        }
-                                    }
-                                }
-                                "KSampler" | "KSamplerAdvanced" => {
-                                    meta.steps = inputs.get("steps").and_then(|v| v.as_u64()).map(|v| v as u32);
-                                    meta.cfg_scale = inputs.get("cfg").and_then(|v| v.as_f64());
-                                    meta.seed = inputs.get("seed").and_then(|v| v.as_i64());
-                                    meta.sampler = inputs.get("sampler_name")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("")
-                                        .to_string();
-                                }
-                                "CheckpointLoaderSimple" | "UNETLoader" => {
-                                    // 优先 ckpt_name，回退到 unet_name
-                                    meta.model = inputs.get("ckpt_name")
-                                        .or_else(|| inputs.get("unet_name"))
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("")
-                                        .to_string();
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    parse_comfyui_prompt(raw.get("prompt"), &mut meta);
 
-    // 如果 prompt 节点中没找到提示词，尝试从 workflow JSON 截取
     if meta.prompt.is_empty() {
-        if let Some(workflow_str) = raw.get("workflow") {
-            meta.prompt = workflow_str.chars().take(200).collect();
-        }
+        meta.prompt = raw
+            .get("workflow")
+            .map(|workflow| workflow.chars().take(200).collect())
+            .unwrap_or_default();
     }
 
     meta
+}
+
+/// 解析 ComfyUI prompt JSON，避免主流程被多层 JSON 判断包裹。
+fn parse_comfyui_prompt(prompt: Option<&String>, meta: &mut ImageMetadata) {
+    let Some(prompt) = prompt else { return; };
+    let Ok(workflow) = serde_json::from_str::<serde_json::Value>(prompt) else { return; };
+    let Some(nodes) = workflow.as_object() else { return; };
+
+    for node in nodes.values() {
+        parse_comfyui_node(node, meta);
+    }
+}
+
+/// 解析单个 ComfyUI 节点。
+fn parse_comfyui_node(node: &serde_json::Value, meta: &mut ImageMetadata) {
+    let Some(class_type) = node.get("class_type").and_then(|v| v.as_str()) else { return; };
+    let Some(inputs) = node.get("inputs") else { return; };
+
+    match class_type {
+        "CLIPTextEncode" => parse_comfyui_clip(inputs, meta),
+        "KSampler" | "KSamplerAdvanced" => parse_comfyui_sampler(inputs, meta),
+        "CheckpointLoaderSimple" | "UNETLoader" => parse_comfyui_model(inputs, meta),
+        _ => {}
+    }
+}
+
+/// 提取 ComfyUI 文本编码节点中的提示词。
+fn parse_comfyui_clip(inputs: &serde_json::Value, meta: &mut ImageMetadata) {
+    let Some(text) = inputs.get("text").and_then(|v| v.as_str()) else { return; };
+
+    // ComfyUI 原始 prompt 中通常第一个 CLIPTextEncode 为正向，第二个为反向。
+    if meta.prompt.is_empty() {
+        meta.prompt = text.to_string();
+    } else if meta.negative_prompt.is_empty() {
+        meta.negative_prompt = text.to_string();
+    }
+}
+
+/// 提取 ComfyUI 采样参数。
+fn parse_comfyui_sampler(inputs: &serde_json::Value, meta: &mut ImageMetadata) {
+    meta.steps = inputs.get("steps").and_then(|v| v.as_u64()).map(|v| v as u32);
+    meta.cfg_scale = inputs.get("cfg").and_then(|v| v.as_f64());
+    meta.seed = inputs.get("seed").and_then(|v| v.as_i64());
+    meta.sampler = inputs
+        .get("sampler_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+}
+
+/// 提取 ComfyUI 模型名称。
+fn parse_comfyui_model(inputs: &serde_json::Value, meta: &mut ImageMetadata) {
+    meta.model = inputs
+        .get("ckpt_name")
+        .or_else(|| inputs.get("unet_name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
 }
 
 /// 解析 NovelAI 格式的元数据
@@ -300,121 +319,162 @@ fn parse_comfyui_metadata(raw: &HashMap<String, String>) -> ImageMetadata {
 /// - `Comment` key：JSON，包含 prompt / uc (negative) / steps / scale / seed 等
 /// - NovelAI v4：从 `v4_prompt.caption` 提取 base_caption 和角色级提示词
 fn parse_novelai_metadata(raw: &HashMap<String, String>) -> ImageMetadata {
-    let mut meta = ImageMetadata::default();
-    meta.source = "novelai".to_string();
-    meta.raw = raw.clone();
+    let mut meta = ImageMetadata {
+        source: "novelai".to_string(),
+        raw: raw.clone(),
+        prompt: raw.get("Description").cloned().unwrap_or_default(),
+        ..Default::default()
+    };
 
-    // Description 字段作为正向提示词的后备值
-    if let Some(desc) = raw.get("Description") {
-        meta.prompt = desc.clone();
-    }
-
-    if let Some(comment) = raw.get("Comment") {
-        if let Ok(params) = serde_json::from_str::<serde_json::Value>(comment) {
-            // 基础参数提取
-            meta.prompt = params.get("prompt")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&meta.prompt)
-                .to_string();
-            meta.negative_prompt = params.get("uc")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            meta.steps = params.get("steps").and_then(|v| v.as_u64()).map(|v| v as u32);
-            meta.cfg_scale = params.get("scale").and_then(|v| v.as_f64());
-            meta.seed = params.get("seed").and_then(|v| v.as_i64());
-            meta.sampler = params.get("sampler")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            meta.width = params.get("width").and_then(|v| v.as_u64()).map(|v| v as u32);
-            meta.height = params.get("height").and_then(|v| v.as_u64()).map(|v| v as u32);
-
-            // NovelAI 模型信息（n_samples 字段标识模型版本）
-            if let Some(model) = params.get("n_samples") {
-                meta.model = format!("NovelAI ({})", model);
-            }
-
-            // NovelAI v4：提取结构化角色提示词
-            // v4_prompt → caption → base_caption + char_captions
-            if let Some(v4_prompt) = params.get("v4_prompt") {
-                if let Some(caption) = v4_prompt.get("caption") {
-                    // base_caption 覆盖顶层 prompt
-                    if let Some(base) = caption.get("base_caption").and_then(|v| v.as_str()) {
-                        if !base.is_empty() {
-                            meta.prompt = base.to_string();
-                        }
-                    }
-                    // 提取每个角色的描述文本和中心坐标
-                    if let Some(char_captions) = caption.get("char_captions").and_then(|v| v.as_array()) {
-                        for cc in char_captions {
-                            let char_caption = cc.get("char_caption")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let centers = cc.get("centers")
-                                .and_then(|v| v.as_array())
-                                .map(|arr| {
-                                    arr.iter()
-                                        .filter_map(|c| {
-                                            let x = c.get("x")?.as_f64()?;
-                                            let y = c.get("y")?.as_f64()?;
-                                            Some((x, y))
-                                        })
-                                        .collect()
-                                })
-                                .unwrap_or_default();
-                            meta.characters.push(CharacterPrompt {
-                                caption: char_caption,
-                                centers,
-                            });
-                        }
-                    }
-                }
-            }
-
-            // NovelAI v4 反向提示词：从 v4_negative_prompt.caption.base_caption 提取
-            if let Some(v4_uc) = params.get("v4_negative_prompt") {
-                if let Some(caption) = v4_uc.get("caption") {
-                    if let Some(base) = caption.get("base_caption").and_then(|v| v.as_str()) {
-                        if !base.is_empty() {
-                            meta.negative_prompt = base.to_string();
-                        }
-                    }
-                    // 将反向角色提示词追加到 negative_prompt
-                    if let Some(char_captions) = caption.get("char_captions").and_then(|v| v.as_array()) {
-                        let neg_chars: Vec<String> = char_captions
-                            .iter()
-                            .filter_map(|cc| cc.get("char_caption")?.as_str().map(|s| s.to_string()))
-                            .collect();
-                        if !neg_chars.is_empty() {
-                            let existing = if meta.negative_prompt.is_empty() { String::new() } else { format!("{}, ", meta.negative_prompt) };
-                            meta.negative_prompt = format!("{}{}", existing, neg_chars.join(", "));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
+    parse_novelai_comment(raw.get("Comment"), &mut meta);
     meta
 }
 
-/// 检测 C2PA / GPT-image 元数据
+/// 解析 NovelAI Comment JSON，缺失或格式错误时保留 Description 后备提示词。
+fn parse_novelai_comment(comment: Option<&String>, meta: &mut ImageMetadata) {
+    let Some(comment) = comment else { return; };
+    let Ok(params) = serde_json::from_str::<serde_json::Value>(comment) else { return; };
+
+    parse_novelai_basic_params(&params, meta);
+    parse_novelai_positive_v4(&params, meta);
+    parse_novelai_negative_v4(&params, meta);
+}
+
+/// 提取 NovelAI 通用生成参数。
+fn parse_novelai_basic_params(params: &serde_json::Value, meta: &mut ImageMetadata) {
+    meta.prompt = params
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&meta.prompt)
+        .to_string();
+    meta.negative_prompt = params
+        .get("uc")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    meta.steps = params.get("steps").and_then(|v| v.as_u64()).map(|v| v as u32);
+    meta.cfg_scale = params.get("scale").and_then(|v| v.as_f64());
+    meta.seed = params.get("seed").and_then(|v| v.as_i64());
+    meta.sampler = params
+        .get("sampler")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    meta.width = params.get("width").and_then(|v| v.as_u64()).map(|v| v as u32);
+    meta.height = params.get("height").and_then(|v| v.as_u64()).map(|v| v as u32);
+
+    if let Some(model) = params.get("n_samples") {
+        meta.model = format!("NovelAI ({})", model);
+    }
+}
+
+/// 提取 NovelAI v4 正向结构化提示词。
+fn parse_novelai_positive_v4(params: &serde_json::Value, meta: &mut ImageMetadata) {
+    let Some(caption) = params
+        .get("v4_prompt")
+        .and_then(|v| v.get("caption"))
+    else { return; };
+
+    if let Some(base) = non_empty_str(caption.get("base_caption")) {
+        meta.prompt = base.to_string();
+    }
+
+    meta.characters.extend(parse_character_prompts(caption));
+}
+
+/// 提取 NovelAI v4 反向结构化提示词。
+fn parse_novelai_negative_v4(params: &serde_json::Value, meta: &mut ImageMetadata) {
+    let Some(caption) = params
+        .get("v4_negative_prompt")
+        .and_then(|v| v.get("caption"))
+    else { return; };
+
+    if let Some(base) = non_empty_str(caption.get("base_caption")) {
+        meta.negative_prompt = base.to_string();
+    }
+
+    let neg_chars: Vec<String> = parse_character_prompts(caption)
+        .into_iter()
+        .map(|character| character.caption)
+        .filter(|caption| !caption.is_empty())
+        .collect();
+
+    if neg_chars.is_empty() {
+        return;
+    }
+
+    if !meta.negative_prompt.is_empty() {
+        meta.negative_prompt.push_str(", ");
+    }
+    meta.negative_prompt.push_str(&neg_chars.join(", "));
+}
+
+/// 解析 NovelAI 角色提示词数组。
+fn parse_character_prompts(caption: &serde_json::Value) -> Vec<CharacterPrompt> {
+    caption
+        .get("char_captions")
+        .and_then(|v| v.as_array())
+        .map(|items| items.iter().map(parse_character_prompt).collect())
+        .unwrap_or_default()
+}
+
+/// 解析单个 NovelAI 角色提示词。
+fn parse_character_prompt(item: &serde_json::Value) -> CharacterPrompt {
+    CharacterPrompt {
+        caption: item
+            .get("char_caption")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        centers: parse_character_centers(item),
+    }
+}
+
+/// 解析 NovelAI 角色中心点。
+fn parse_character_centers(item: &serde_json::Value) -> Vec<(f64, f64)> {
+    item
+        .get("centers")
+        .and_then(|v| v.as_array())
+        .map(|centers| {
+            centers
+                .iter()
+                .filter_map(|center| {
+                    let x = center.get("x")?.as_f64()?;
+                    let y = center.get("y")?.as_f64()?;
+                    Some((x, y))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 获取非空字符串字段。
+fn non_empty_str(value: Option<&serde_json::Value>) -> Option<&str> {
+    value.and_then(|v| v.as_str()).filter(|s| !s.is_empty())
+}
+
+/// 检测 C2PA / GPT-image / GPT-4o 元数据
 ///
-/// 扫描 PNG 非文本 chunk 的原始数据，查找 C2PA 标记（如 "gpt-image"、"OpenAI" 等）。
+/// 扫描 PNG 非文本 chunk 的原始数据，查找 C2PA 标记。
+/// GPT-image-2 刚上线早期部分文件仍可能写入 `gpt-4o` / `GPT-4o` / `4o` 相关字段，
+/// 因此这里同时覆盖 OpenAI GPT-image 与 4o 系列标记。
 /// 如果检测到，返回解析后的 ImageMetadata。
 fn detect_c2pa_gpt_image(c2pa_raw: &[u8], text_chunks: &HashMap<String, String>) -> Option<ImageMetadata> {
     if c2pa_raw.is_empty() {
         return None;
     }
 
-    // 在原始数据中搜索 GPT-image 特征字符串
+    // 在原始数据中搜索 OpenAI 系列生成图像的 C2PA 特征字符串
     let raw_str = String::from_utf8_lossy(c2pa_raw);
-    let has_gpt = raw_str.contains("gpt-image") || raw_str.contains("gpt_image");
-    let has_openai = raw_str.contains("OpenAI") || raw_str.contains("openai");
+    let raw_lower = raw_str.to_lowercase();
+    let has_gpt_image = raw_lower.contains("gpt-image") || raw_lower.contains("gpt_image");
+    let has_gpt_4o = raw_lower.contains("gpt-4o")
+        || raw_lower.contains("gpt_4o")
+        || raw_lower.contains("gpt4o")
+        || raw_lower.contains("4o");
+    let has_openai = raw_lower.contains("openai");
 
-    if !has_gpt && !has_openai {
+    if !has_gpt_image && !(has_openai && has_gpt_4o) {
         return None;
     }
 
@@ -424,7 +484,7 @@ fn detect_c2pa_gpt_image(c2pa_raw: &[u8], text_chunks: &HashMap<String, String>)
 
     // 尝试从 C2PA 数据中提取版本信息
     // 格式示例：ActionsSoftwareAgentVersion "2.0"
-    if let Some(version_start) = raw_str.find("gpt-image") {
+    if let Some(version_start) = raw_lower.find("gpt-image").or_else(|| raw_lower.find("gpt_image")) {
         // gpt-image 后面可能跟版本号，如 "gpt-image-2" 或 "gpt-image 2.0"
         let after = &raw_str[version_start..];
         if let Some(ver_end) = after.find(|c: char| !c.is_alphanumeric() && c != '-' && c != '.' && c != '_') {
@@ -433,6 +493,8 @@ fn detect_c2pa_gpt_image(c2pa_raw: &[u8], text_chunks: &HashMap<String, String>)
         } else {
             meta.model = "GPT-image".to_string();
         }
+    } else if has_gpt_4o {
+        meta.model = "GPT-4o / GPT-image".to_string();
     } else {
         meta.model = "GPT-image (OpenAI)".to_string();
     }

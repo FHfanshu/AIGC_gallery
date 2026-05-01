@@ -259,6 +259,56 @@ export function Sidebar({
                 </Button>
               </div>
             </div>
+            {/* 数据导入导出 */}
+            <div>
+              <label className="text-xs font-medium text-ink-secondary uppercase tracking-widest">{t.sidebar.dataBackup}</label>
+              <div className="flex gap-2 mt-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      const { save } = await import('@tauri-apps/plugin-dialog');
+                      const path = await save({
+                        defaultPath: 'aigc-gallery-backup.zip',
+                        filters: [{ name: 'ZIP', extensions: ['zip'] }],
+                      });
+                      if (!path) return;
+                      const result = await api.exportGallery(path);
+                      alert(result);
+                    } catch (e) {
+                      console.error('Export failed:', e);
+                      alert(`导出失败: ${e}`);
+                    }
+                  }}
+                >
+                  {t.sidebar.exportData}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      const { open } = await import('@tauri-apps/plugin-dialog');
+                      const path = await open({
+                        filters: [{ name: 'ZIP', extensions: ['zip'] }],
+                        multiple: false,
+                      });
+                      if (!path) return;
+                      if (!confirm(t.sidebar.importConfirm)) return;
+                      const result = await api.importGallery(path as string);
+                      alert(result);
+                      window.location.reload();
+                    } catch (e) {
+                      console.error('Import failed:', e);
+                      alert(`导入失败: ${e}`);
+                    }
+                  }}
+                >
+                  {t.sidebar.importData}
+                </Button>
+              </div>
+            </div>
           </Card>
         )}
       </div>

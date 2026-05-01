@@ -211,7 +211,9 @@ function App() {
         <Header
           searchQuery={gallery.searchQuery}
           setSearchQuery={gallery.setSearchQuery}
-          imageCount={currentImages.length}
+          imageCount={view === 'gallery' && !gallery.searchQuery.trim() && !nsfw.hideNSFW ? (stats.stats?.total_images ?? currentImages.length) : currentImages.length}
+          loadedCount={view === 'gallery' ? currentImages.length : undefined}
+          totalCount={view === 'gallery' && !gallery.searchQuery.trim() && !nsfw.hideNSFW ? stats.stats?.total_images : undefined}
           hideNSFW={nsfw.hideNSFW}
           onToggleNSFW={() => {
             nsfw.toggleNSFW();

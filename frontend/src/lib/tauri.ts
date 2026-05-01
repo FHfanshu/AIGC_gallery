@@ -73,4 +73,12 @@ export const api = {
   /** 通过模型文件 hash 查询 Civitai 模型版本信息 */
   lookupCivitaiByHash: (hash: string) =>
     invoke<CivitaiLookupResult | null>('lookup_civitai_by_hash', { hash }),
+
+  /** 导出图库数据到 zip 文件，返回结果描述 */
+  exportGallery: (destPath: string) =>
+    invoke<string>('export_gallery', { destPath }),
+
+  /** 从 zip 文件导入图库数据，返回结果描述 */
+  importGallery: (zipPath: string) =>
+    invoke<string>('import_gallery', { zipPath }),
 };

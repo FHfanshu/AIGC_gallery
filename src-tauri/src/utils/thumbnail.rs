@@ -20,17 +20,3 @@ pub fn generate_thumbnail_to_path(source_path: &Path, dest_path: &Path, max_size
         .map_err(|e| format!("Failed to save thumbnail: {}", e))?;
     Ok(dest_path.to_path_buf())
 }
-
-/// 生成缩略图：读取源图，等比缩放至 max_size 以内，保存为 JPEG
-pub fn generate_thumbnail(source_path: &Path, dest_dir: &Path, max_size: u32) -> Result<PathBuf, String> {
-    // 确保目标目录存在
-    std::fs::create_dir_all(dest_dir).map_err(|e| format!("Failed to create thumbnail dir: {}", e))?;
-
-    // Build destination path: {stem}_thumb.jpg
-    let stem = source_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("image");
-    let dest_path = dest_dir.join(format!("{}_thumb.jpg", stem));
-    generate_thumbnail_to_path(source_path, &dest_path, max_size)
-}

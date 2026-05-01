@@ -54,6 +54,8 @@ pub fn run() {
             commands::get_civitai_key_status,
             commands::set_civitai_api_key,
             commands::lookup_civitai_by_hash,
+            commands::export_gallery,
+            commands::import_gallery,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

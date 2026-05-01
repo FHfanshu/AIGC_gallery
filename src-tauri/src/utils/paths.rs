@@ -16,18 +16,3 @@ pub fn app_data_dir() -> PathBuf {
 pub fn db_path() -> PathBuf {
     app_data_dir().join("gallery.db")
 }
-
-/// 根据配置解析实际的存储根目录
-fn storage_root() -> PathBuf {
-    app_data_dir()
-}
-
-/// 图片存储目录
-pub fn images_dir() -> PathBuf {
-    storage_root().join("images")
-}
-
-/// 缩略图存储目录
-pub fn thumbnails_dir() -> PathBuf {
-    storage_root().join("thumbnails")
-}

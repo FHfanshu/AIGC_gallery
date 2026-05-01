@@ -84,7 +84,6 @@ export const zh: Translations = {
     loraHash: 'LoRA / 哈希',
     previewHelp: 'Ctrl/Alt + 滚轮 · 拖拽 ·',
     software: '软件',
-    source: '来源',
     request: '请求类型',
     generationTime: '生成耗时',
     uncondVibe: 'Uncond / Vibe',
@@ -111,5 +110,9 @@ export const zh: Translations = {
     apiKeyStored: '可选。存储在本地系统凭证库中。',
     apiKeyPlaceholder: '粘贴 API 密钥',
     apiKeyClearHint: '留空以清除',
+    dataBackup: '数据备份',
+    exportData: '导出',
+    importData: '导入',
+    importConfirm: '导入会将数据合并到当前图库，已存在的文件将跳过。确认继续？',
   },
 };

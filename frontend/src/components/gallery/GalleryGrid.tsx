@@ -52,7 +52,7 @@ export function GalleryGrid({
     count: hasMore ? rows + 1 : rows, // 有更多数据时多一行用于触发加载
     getScrollElement: () => parentRef.current,
     estimateSize: () => rowHeight + ROW_GAP,
-    overscan: 3, // 预渲染上下各3行
+    overscan: 6, // 提前预渲染更多行，让缩略图有时间在进入视口前完成加载
   });
 
   // 滚动触底检测：倒数第二行出现时触发加载更多
@@ -84,7 +84,7 @@ export function GalleryGrid({
     const el = parentRef.current;
     if (!el || !onViewportCapacityChange) return;
     const visibleRows = Math.ceil(el.clientHeight / Math.max(1, rowHeight + ROW_GAP));
-    onViewportCapacityChange((visibleRows + 8) * columnCount);
+    onViewportCapacityChange((visibleRows + 14) * columnCount);
   }, [columnCount, rowHeight, onViewportCapacityChange]);
 
   if (images.length === 0 && !loading) {

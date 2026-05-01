@@ -670,3 +670,142 @@ pub fn get_image_base64(state: State<AppState>, image_id: i64, use_thumbnail: bo
 
     Err(format!("No existing image file found for image id {}", image_id))
 }
+
+/// 导出图库数据到 .zip 文件
+///
+/// 将 gallery.db、images/、thumbnails/、config.json 打包到用户指定的 zip 文件。
+/// 导出路径由前端通过系统文件对话框传入。
+#[tauri::command]
+pub fn export_gallery(dest_path: String) -> Result<String, String> {
+    let root = crate::config::resolve_storage_dir(&crate::config::load_config());
+    let dest = PathBuf::from(&dest_path);
+
+    let file = fs::File::create(&dest).map_err(|e| format!("创建导出文件失败: {}", e))?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    // 收集要打包的文件：config.json、gallery.db、images/*、thumbnails/*
+    let mut entries: Vec<(PathBuf, String)> = Vec::new();
+
+    // config.json — 归档根为根目录
+    let cfg_path = crate::config::default_storage_dir().join("config.json");
+    if cfg_path.exists() {
+        entries.push((cfg_path, "config.json".to_string()));
+    }
+
+    // gallery.db
+    let db_path = root.join("gallery.db");
+    if db_path.exists() {
+        entries.push((db_path, "gallery.db".to_string()));
+    }
+
+    // images/ 目录
+    let images_dir = root.join("images");
+    if images_dir.is_dir() {
+        for entry in WalkDir::new(&images_dir).min_depth(1).into_iter().filter_map(|e| e.ok()) {
+            if entry.file_type().is_file() {
+                let rel = format!("images/{}", entry.path().strip_prefix(&images_dir).unwrap().to_string_lossy());
+                entries.push((entry.into_path(), rel));
+            }
+        }
+    }
+
+    // thumbnails/ 目录
+    let thumbs_dir = root.join("thumbnails");
+    if thumbs_dir.is_dir() {
+        for entry in WalkDir::new(&thumbs_dir).min_depth(1).into_iter().filter_map(|e| e.ok()) {
+            if entry.file_type().is_file() {
+                let rel = format!("thumbnails/{}", entry.path().strip_prefix(&thumbs_dir).unwrap().to_string_lossy());
+                entries.push((entry.into_path(), rel));
+            }
+        }
+    }
+
+    let total = entries.len();
+    for (path, name) in &entries {
+        zip.start_file(name, options).map_err(|e| e.to_string())?;
+        let data = fs::read(path).map_err(|e| format!("读取 {} 失败: {}", path.display(), e))?;
+        use std::io::Write;
+        zip.write_all(&data).map_err(|e| e.to_string())?;
+    }
+
+    zip.finish().map_err(|e| e.to_string())?;
+    Ok(format!("导出成功：{} 个文件 → {}", total, dest_path))
+}
+
+/// 导入图库数据从 .zip 文件
+///
+/// 从用户选择的 zip 文件恢复 gallery.db、images/、thumbnails/ 到当前图库目录。
+/// 已存在的文件将跳过（不覆盖）；DB 被替换前会先备份为 gallery.db.bak。
+#[tauri::command]
+pub fn import_gallery(app: AppHandle, zip_path: String) -> Result<String, String> {
+    let root = crate::config::resolve_storage_dir(&crate::config::load_config());
+    let src = PathBuf::from(&zip_path);
+
+    if !src.exists() {
+        return Err("zip 文件不存在".to_string());
+    }
+
+    let file = fs::File::open(&src).map_err(|e| format!("打开 zip 文件失败: {}", e))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("解析 zip 失败: {}", e))?;
+
+    let mut restored = 0u32;
+    let mut skipped = 0u32;
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+        let entry_name = entry.mangled_name();
+
+        // 安全校验：拒绝路径穿越
+        if entry_name.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            skipped += 1;
+            continue;
+        }
+
+        let name_str = entry_name.to_string_lossy().to_string();
+
+        // gallery.db — 备份旧 DB 后替换
+        if name_str == "gallery.db" {
+            let dest = root.join("gallery.db");
+            if dest.exists() {
+                let backup = root.join("gallery.db.bak");
+                fs::copy(&dest, &backup).map_err(|e| format!("备份 DB 失败: {}", e))?;
+            }
+            let mut out = fs::File::create(&dest).map_err(|e| e.to_string())?;
+            std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+            restored += 1;
+            continue;
+        }
+
+        // config.json — 跳过（不覆盖用户当前配置）
+        if name_str == "config.json" {
+            skipped += 1;
+            continue;
+        }
+
+        // images/ 或 thumbnails/ 下的文件
+        let dest = root.join(&name_str);
+        if dest.exists() {
+            skipped += 1;
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let mut out = fs::File::create(&dest).map_err(|e| e.to_string())?;
+        std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+        restored += 1;
+    }
+
+    // 重新初始化数据库连接，使导入的数据立即可用
+    match db::Database::new() {
+        Ok(new_db) => {
+            let mut db_lock = app.state::<AppState>().db.lock().map_err(|e| e.to_string())?;
+            *db_lock = new_db;
+        }
+        Err(e) => return Err(format!("导入文件已恢复，但重新加载数据库失败: {}", e)),
+    }
+
+    Ok(format!("导入成功：恢复 {} 个文件，跳过 {} 个", restored, skipped))
+}

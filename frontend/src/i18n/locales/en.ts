@@ -83,7 +83,6 @@ export const en = {
     loraHash: 'LoRA / Hash',
     previewHelp: 'Ctrl/Alt + Wheel · Drag ·',
     software: 'Software',
-    source: 'Source',
     request: 'Request',
     generationTime: 'Generation Time',
     uncondVibe: 'Uncond / Vibe',
@@ -110,6 +109,10 @@ export const en = {
     apiKeyStored: 'Optional. Stored locally in the system credential store.',
     apiKeyPlaceholder: 'Paste API key',
     apiKeyClearHint: 'Leave empty to clear',
+    dataBackup: 'Data Backup',
+    exportData: 'Export',
+    importData: 'Import',
+    importConfirm: 'Import will merge data into the current gallery. Existing files will be skipped. Continue?',
   },
 } as const;
 

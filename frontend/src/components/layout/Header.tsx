@@ -12,6 +12,8 @@ interface HeaderProps {
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   imageCount: number;
+  loadedCount?: number;
+  totalCount?: number;
   hideNSFW: boolean;
   onToggleNSFW: () => void;
   nsfwTags: string[];
@@ -26,7 +28,7 @@ interface HeaderProps {
 
 /** 顶部栏：搜索框 + NSFW过滤控制 + 图片计数 */
 export function Header({
-  searchQuery, setSearchQuery, imageCount,
+  searchQuery, setSearchQuery, imageCount, loadedCount, totalCount,
   hideNSFW, onToggleNSFW, nsfwTags, onAddNSFWTag, onRemoveNSFWTag, onRefresh,
   sortBy, onSortByChange, sortDir, onSortDirChange,
 }: HeaderProps) {
@@ -189,7 +191,7 @@ export function Header({
         <select
           value={sortBy}
           onChange={e => onSortByChange(e.target.value as SortField)}
-          className="px-2 py-1 text-xs rounded-btn border border-ink-line bg-ink-bg text-ink-secondary outline-none focus:border-ink-muted"
+          className="px-2 py-1 text-xs rounded-btn border border-ink-line bg-ink-bg text-ink-secondary outline-none focus:border-ink-muted cursor-pointer"
         >
           <option value="created_at">{t.header.sortTime}</option>
           <option value="file_name">{t.header.sortFileName}</option>
@@ -215,8 +217,11 @@ export function Header({
       </div>
 
       {/* 图片计数 */}
-      <div className="text-caption text-ink-muted flex-shrink-0 tracking-widest">
+      <div className="text-caption text-ink-muted flex-shrink-0 tracking-widest" title={loadedCount !== undefined && totalCount !== undefined ? `${imageCount} displayed · ${loadedCount}/${totalCount} loaded` : undefined}>
         {tReplace(t.header.count, { count: imageCount })}
+        {loadedCount !== undefined && totalCount !== undefined && totalCount > loadedCount && (
+          <span className="ml-1 text-ink-faint normal-case tracking-normal">({loadedCount}/{totalCount})</span>
+        )}
       </div>
     </header>
   );
