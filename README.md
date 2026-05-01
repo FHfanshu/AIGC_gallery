@@ -1,5 +1,7 @@
 # AIGC Gallery
 
+[English README](README.en.md)
+
 AIGC Gallery 是一个本地优先的 AIGC 图片图库管理桌面应用，主要用于整理带生成元数据的 PNG 图片。项目使用 Tauri 2 + React 构建，图片、缩略图和 SQLite 数据库默认保存在应用旁的 `gallery-data` 目录，尽量避免把用户图库写入系统 AppData。
 
 > 当前版本：`0.1.0`（见 `frontend/package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`）
