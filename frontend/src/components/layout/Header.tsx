@@ -97,7 +97,7 @@ export function Header({
           <button
             onClick={onToggleNSFW}
             title={hideNSFW ? t.header.nsfwHidden : t.header.nsfwVisible}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-btn text-xs font-medium transition-all duration-200 ease-out active:scale-95 ${
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-btn text-xs font-medium transition-all duration-150 ${
               hideNSFW
                 ? 'text-ink-faint hover:text-ink-muted hover:bg-ink-surface'
                 : 'text-ink-danger bg-red-50 hover:bg-red-100'
@@ -128,7 +128,7 @@ export function Header({
           <button
             onClick={() => setShowNSFWPanel(prev => !prev)}
             title={t.header.editNsfwTags}
-            className="w-7 h-7 rounded-full flex items-center justify-center text-ink-faint hover:text-ink-muted hover:bg-ink-surface transition-all duration-200 ease-out hover:scale-110 active:scale-95"
+            className="w-7 h-7 rounded-full flex items-center justify-center text-ink-faint hover:text-ink-muted transition-colors"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="3" />

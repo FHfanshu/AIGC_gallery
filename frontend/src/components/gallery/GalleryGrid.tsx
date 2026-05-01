@@ -171,20 +171,15 @@ export function GalleryGrid({
                 className="grid px-0"
                 style={{ gridTemplateColumns: `repeat(${columnCount}, 1fr)`, gap: GRID_GAP }}
               >
-                {rowImages.map((img, colIdx) => (
-                  <div
+                {rowImages.map(img => (
+                  <ImageCard
                     key={img.id}
-                    className="card-fade-in"
-                    style={{ animationDelay: `${colIdx * 50}ms` }}
-                  >
-                    <ImageCard
-                      image={img}
-                      selected={selectedId === img.id}
-                      onClick={() => onSelect(img)}
-                      onToggleFavorite={onToggleFavorite}
-                      onHideImage={onHideImage}
-                    />
-                  </div>
+                    image={img}
+                    selected={selectedId === img.id}
+                    onClick={() => onSelect(img)}
+                    onToggleFavorite={onToggleFavorite}
+                    onHideImage={onHideImage}
+                  />
                 ))}
               </div>
             </div>
