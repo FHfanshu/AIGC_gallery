@@ -19,7 +19,9 @@ interface HeaderProps {
   nsfwTags: string[];
   onAddNSFWTag: (tag: string) => void;
   onRemoveNSFWTag: (tag: string) => void;
-  onRefresh: () => void; // 刷新图库回调
+  onRefresh: () => void; // 刷新图库或当前详情元数据回调
+  isRefreshing?: boolean;
+  refreshProgress?: { done: number; total: number };
   sortBy: SortField;
   onSortByChange: (field: SortField) => void;
   sortDir: SortDirection;
@@ -29,7 +31,7 @@ interface HeaderProps {
 /** 顶部栏：搜索框 + NSFW过滤控制 + 图片计数 */
 export function Header({
   searchQuery, setSearchQuery, imageCount, loadedCount, totalCount,
-  hideNSFW, onToggleNSFW, nsfwTags, onAddNSFWTag, onRemoveNSFWTag, onRefresh,
+  hideNSFW, onToggleNSFW, nsfwTags, onAddNSFWTag, onRemoveNSFWTag, onRefresh, isRefreshing = false, refreshProgress,
   sortBy, onSortByChange, sortDir, onSortDirChange,
 }: HeaderProps) {
   const { t } = useI18n();
@@ -79,16 +81,22 @@ export function Header({
 
       <button
         onClick={onRefresh}
-        title={t.common.refresh}
-        className="w-8 h-8 rounded-full flex items-center justify-center text-ink-faint hover:text-ink-muted hover:bg-ink-surface transition-colors"
+        disabled={isRefreshing}
+        title={isRefreshing && refreshProgress?.total ? `${t.common.refreshing} ${refreshProgress.done}/${refreshProgress.total}` : (isRefreshing ? t.common.refreshing : t.common.refresh)}
+        className={`w-8 h-8 rounded-full flex items-center justify-center text-ink-faint hover:text-ink-muted hover:bg-ink-surface transition-colors ${isRefreshing ? 'cursor-wait opacity-70' : ''}`}
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg className={isRefreshing ? 'animate-spin' : ''} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="23 4 23 10 17 10" />
           <polyline points="1 20 1 14 7 14" />
           <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
           <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14" />
         </svg>
       </button>
+      {isRefreshing && refreshProgress?.total ? (
+        <span className="text-[10px] text-ink-muted tabular-nums -ml-3">
+          {refreshProgress.done}/{refreshProgress.total}
+        </span>
+      ) : null}
 
       {/* NSFW控制区 */}
       <div className="relative flex-shrink-0" ref={panelRef}>

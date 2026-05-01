@@ -7,6 +7,7 @@ export const en = {
   },
   common: {
     refresh: 'Refresh',
+    refreshing: 'Refreshing...',
     save: 'Save',
     add: 'Add',
   },
@@ -76,6 +77,9 @@ export const en = {
     favorite: 'Favorite',
     favorited: 'Favorited',
     confirmDelete: 'Confirm Delete?',
+    reparseMetadata: 'Reparse metadata',
+    reparsingMetadata: 'Reparsing...',
+    reparseMetadataError: 'Failed to reparse metadata',
     previewOriginal: 'Preview original image',
     checkpointHash: 'Checkpoint hash:',
     lookingUp: 'Looking up...',
@@ -113,6 +117,7 @@ export const en = {
     exportData: 'Export',
     importData: 'Import',
     importConfirm: 'Import will merge data into the current gallery. Existing files will be skipped. Continue?',
+    backupWorking: 'Working...',
   },
 } as const;
 

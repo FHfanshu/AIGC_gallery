@@ -7,6 +7,7 @@ import { createPortal } from 'react-dom';
 import { Button, Card, Textarea } from '../ui';
 import { parseMetadata, getSourceLabel, truncate } from '../../lib/utils';
 import { api } from '../../lib/tauri';
+import { confirm } from '@tauri-apps/plugin-dialog';
 import { useI18n } from '../../i18n';
 import type { CivitaiLookupResult, ImageRecord, ImageMetadata } from '../../types';
 
@@ -16,11 +17,12 @@ interface ImageDetailProps {
   onDelete: (id: number) => void;
   onToggleFavorite: (imageId: number) => void;
   onUpdatePrompt: (imageId: number, positive: string, negative: string) => void;
+  onReparseMetadata: (imageId: number) => Promise<void>;
 }
 
 /** 图片详情面板：展示图片预览、提示词（可编辑）、参数、角色描述，并提供收藏/删除操作 */
 export function ImageDetail({
-  image, onClose, onDelete, onToggleFavorite, onUpdatePrompt,
+  image, onClose, onDelete, onToggleFavorite, onUpdatePrompt, onReparseMetadata,
 }: ImageDetailProps) {
   const { t } = useI18n();
   const [isEditing, setIsEditing] = useState(false); // 提示词编辑模式
@@ -34,6 +36,8 @@ export function ImageDetail({
   const [civitaiResults, setCivitaiResults] = useState<Record<string, CivitaiLookupResult | null>>({});
   const [civitaiLoadingHash, setCivitaiLoadingHash] = useState<string | null>(null);
   const [civitaiError, setCivitaiError] = useState<string | null>(null);
+  const [isReparsing, setIsReparsing] = useState(false);
+  const [reparseError, setReparseError] = useState<string | null>(null);
   const dragRef = useRef({ active: false, x: 0, y: 0, startX: 0, startY: 0 });
 
   const meta: ImageMetadata | null = parseMetadata(image.metadata_json); // 解析元数据 JSON
@@ -83,6 +87,19 @@ export function ImageDetail({
   const handleSavePrompt = () => {
     onUpdatePrompt(image.id, editPrompt, editNegPrompt);
     setIsEditing(false);
+  };
+
+  /** 使用当前文件重新解析 PNG 元数据。 */
+  const handleReparseMetadata = async () => {
+    setIsReparsing(true);
+    setReparseError(null);
+    try {
+      await onReparseMetadata(image.id);
+    } catch (e) {
+      setReparseError(`${t.detail.reparseMetadataError}: ${e}`);
+    } finally {
+      setIsReparsing(false);
+    }
   };
 
   const handleCivitaiLookup = async (hash: string) => {
@@ -178,12 +195,22 @@ export function ImageDetail({
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-ink-line">
         <h3 className="font-display font-bold text-sm text-ink uppercase tracking-wider">{t.detail.imageDetail}</h3>
-        <Button variant="icon" size="sm" onClick={onClose}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="icon" size="sm" disabled={isReparsing} onClick={handleReparseMetadata}>
+            <svg className={isReparsing ? 'animate-spin' : ''} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="23 4 23 10 17 10" />
+              <polyline points="1 20 1 14 7 14" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
+              <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14" />
+            </svg>
+          </Button>
+          <Button variant="icon" size="sm" onClick={onClose}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </Button>
+        </div>
       </div>
 
       {/* 图片预览 */}
@@ -402,24 +429,42 @@ export function ImageDetail({
         </div>
       )}
 
-      {/* 生成参数（steps、CFG、seed、采样器、尺寸） */}
+      {/* 生成参数：新元数据按节点/阶段分组，旧元数据保留扁平展示 */}
       {meta && (
         <div className="px-5 py-3 border-b border-ink-line">
           <label className="text-caption text-ink-muted uppercase tracking-widest mb-2 block">{t.detail.parameters}</label>
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              meta.steps && [t.detail.steps, meta.steps],
-              meta.cfg_scale && [t.detail.cfg, meta.cfg_scale],
-              meta.seed && [t.detail.seed, meta.seed],
-              meta.sampler && [t.detail.sampler, truncate(meta.sampler, 16)],
-              (meta.width && meta.height) && [t.detail.size, `${meta.width} x ${meta.height}`],
-            ].filter(Boolean).map(([label, value]) => (
-              <div key={label as string} className="px-3 py-2 rounded-card border border-ink-line bg-ink-surface">
-                <p className="text-[10px] text-ink-muted uppercase tracking-widest">{label}</p>
-                <p className="text-sm font-medium text-ink mt-0.5 tabular-nums">{value}</p>
-              </div>
-            ))}
-          </div>
+          {meta.parameter_groups && meta.parameter_groups.length > 0 ? (
+            <div className="space-y-3">
+              {meta.parameter_groups.map((group) => (
+                <div key={group.title}>
+                  <p className="text-[10px] text-ink-muted uppercase tracking-widest mb-1">{group.title}</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {group.params.map((param) => (
+                      <div key={`${group.title}-${param.label}`} className="px-3 py-2 rounded-card border border-ink-line bg-ink-surface">
+                        <p className="text-[10px] text-ink-muted uppercase tracking-widest">{param.label}</p>
+                        <p className="text-sm font-medium text-ink mt-0.5 tabular-nums break-words">{truncate(String(param.value), 32)}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                meta.steps && [t.detail.steps, meta.steps],
+                meta.cfg_scale && [t.detail.cfg, meta.cfg_scale],
+                meta.seed && [t.detail.seed, meta.seed],
+                meta.sampler && [t.detail.sampler, truncate(meta.sampler, 16)],
+                (meta.width && meta.height) && [t.detail.size, `${meta.width} x ${meta.height}`],
+              ].filter(Boolean).map(([label, value]) => (
+                <div key={label as string} className="px-3 py-2 rounded-card border border-ink-line bg-ink-surface">
+                  <p className="text-[10px] text-ink-muted uppercase tracking-widest">{label}</p>
+                  <p className="text-sm font-medium text-ink mt-0.5 tabular-nums">{value}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -451,14 +496,20 @@ export function ImageDetail({
           variant="danger"
           size="sm"
           onClick={() => {
-            if (window.confirm(t.detail.confirmDelete)) {
+            confirm(t.detail.confirmDelete).then((ok) => { if (ok) {
               onDelete(image.id);
-            }
+            }});
           }}
         >
           {t.detail.delete}
         </Button>
       </div>
+
+      {reparseError && (
+        <div className="px-5 py-2 border-t border-ink-line text-xs text-ink-danger">
+          {reparseError}
+        </div>
+      )}
 
       {isPreviewOpen && createPortal(
         <div

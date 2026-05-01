@@ -24,6 +24,7 @@ pub struct ImageMetadata {
     pub seed: Option<i64>,        // 随机种子
     pub width: Option<u32>,       // 图片宽度
     pub height: Option<u32>,      // 图片高度
+    pub parameter_groups: Vec<ParameterGroup>, // 按生成阶段/节点分组的参数
     pub source: String,           // 来源类型："a1111" / "comfyui" / "novelai" / "unknown"
     pub characters: Vec<CharacterPrompt>, // NovelAI v4 角色级提示词
     pub raw: HashMap<String, String>,     // 原始 key-value 数据（保留完整 chunk）
@@ -35,6 +36,20 @@ pub struct ImageMetadata {
 pub struct CharacterPrompt {
     pub caption: String,               // 角色描述文本
     pub centers: Vec<(f64, f64)>,      // 角色在画面中的归一化坐标 (x, y)
+}
+
+/// 生成参数分组，保留 ComfyUI 节点和 A1111 Hires fix 等阶段信息。
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ParameterGroup {
+    pub title: String,
+    pub params: Vec<ParameterItem>,
+}
+
+/// 单个生成参数键值。
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ParameterItem {
+    pub label: String,
+    pub value: String,
 }
 
 /// 解析 PNG 文件的 tEXt / iTXt chunk，自动检测来源并返回结构化元数据
@@ -195,6 +210,7 @@ fn parse_a1111_metadata(parameters: &str, raw: &HashMap<String, String>) -> Imag
             // Size 格式为 "WxH"
             meta.width = params.get("Size").and_then(|s| s.split('x').next()?.parse().ok());
             meta.height = params.get("Size").and_then(|s| s.split('x').nth(1)?.parse().ok());
+            meta.parameter_groups = build_a1111_parameter_groups(&params);
         }
     }
 
@@ -228,6 +244,39 @@ fn parse_a1111_params(params_str: &str) -> HashMap<String, String> {
     }
 
     params
+}
+
+/// 将 A1111 参数按普通生成和 Hires fix 分组。
+fn build_a1111_parameter_groups(params: &HashMap<String, String>) -> Vec<ParameterGroup> {
+    let generation_keys = ["Steps", "Sampler", "CFG scale", "Seed", "Size", "Model"];
+    let hires_keys = [
+        "Hires upscale", "Hires upscaler", "Hires steps", "Hires resize", "Hires prompt",
+        "Hires negative prompt", "Denoising strength", "First pass size",
+    ];
+
+    let generation = build_param_group("Generation", &generation_keys, params);
+    let hires = build_param_group("Hires fix", &hires_keys, params);
+
+    [generation, hires]
+        .into_iter()
+        .filter(|group| !group.params.is_empty())
+        .collect()
+}
+
+/// 按指定 key 顺序构造参数分组。
+fn build_param_group(title: &str, keys: &[&str], params: &HashMap<String, String>) -> ParameterGroup {
+    ParameterGroup {
+        title: title.to_string(),
+        params: keys
+            .iter()
+            .filter_map(|key| {
+                params.get(*key).filter(|value| !value.is_empty()).map(|value| ParameterItem {
+                    label: (*key).to_string(),
+                    value: value.clone(),
+                })
+            })
+            .collect(),
+    }
 }
 
 /// 解析 ComfyUI 格式的 prompt JSON
@@ -264,7 +313,10 @@ fn parse_comfyui_prompt(prompt: Option<&String>, meta: &mut ImageMetadata) {
     let mut positive_ref: Option<String> = None;
     let mut negative_ref: Option<String> = None;
 
-    for node in nodes.values() {
+    let mut node_entries: Vec<(&String, &serde_json::Value)> = nodes.iter().collect();
+    node_entries.sort_by_key(|(id, _)| id.parse::<u32>().unwrap_or(u32::MAX));
+
+    for (node_id, node) in node_entries {
         let Some(class_type) = node.get("class_type").and_then(|v| v.as_str()) else { continue; };
         let Some(inputs) = node.get("inputs") else { continue; };
 
@@ -280,6 +332,10 @@ fn parse_comfyui_prompt(prompt: Option<&String>, meta: &mut ImageMetadata) {
             }
             "CheckpointLoaderSimple" | "UNETLoader" => parse_comfyui_model(inputs, meta),
             _ => {}
+        }
+
+        if let Some(group) = build_comfyui_parameter_group(node_id, class_type, inputs) {
+            meta.parameter_groups.push(group);
         }
     }
 
@@ -305,16 +361,33 @@ fn parse_comfyui_node_ref(value: Option<&serde_json::Value>) -> Option<&str> {
 }
 
 /// 根据节点 ID 提取对应 CLIPTextEncode 的文本内容。
+///
+/// 如果节点的 text 输入是字符串则直接返回；如果是节点引用（数组），
+/// 则递归跟踪引用链直到找到实际的文本值。
+/// 支持 "easy positive" / "easy negative" 等自定义文本节点。
 fn parse_comfyui_clip_text_by_id<'a>(
     nodes: &'a serde_json::Map<String, serde_json::Value>,
     node_id: &str,
 ) -> Option<&'a str> {
     let node = nodes.get(node_id)?;
-    let class_type = node.get("class_type").and_then(|v| v.as_str())?;
-    if class_type != "CLIPTextEncode" {
-        return None;
+    let inputs = node.get("inputs")?;
+
+    // 按优先级检查文本输入字段：text → positive → negative
+    for key in &["text", "positive", "negative"] {
+        if let Some(value) = inputs.get(*key) {
+            // 直接字符串 → 返回
+            if let Some(s) = value.as_str() {
+                return Some(s);
+            }
+            // 节点引用（数组如 ["27", 0]）→ 递归跟踪
+            if let Some(ref_node_id) = value.as_array().and_then(|a| a.first()).and_then(|v| v.as_str()) {
+                if let Some(text) = parse_comfyui_clip_text_by_id(nodes, ref_node_id) {
+                    return Some(text);
+                }
+            }
+        }
     }
-    node.get("inputs")?.get("text")?.as_str()
+    None
 }
 
 /// 解析单个 ComfyUI 节点。
@@ -344,14 +417,79 @@ fn parse_comfyui_clip(inputs: &serde_json::Value, meta: &mut ImageMetadata) {
 
 /// 提取 ComfyUI 采样参数。
 fn parse_comfyui_sampler(inputs: &serde_json::Value, meta: &mut ImageMetadata) {
-    meta.steps = inputs.get("steps").and_then(|v| v.as_u64()).map(|v| v as u32);
-    meta.cfg_scale = inputs.get("cfg").and_then(|v| v.as_f64());
-    meta.seed = inputs.get("seed").and_then(|v| v.as_i64());
-    meta.sampler = inputs
-        .get("sampler_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
+    if meta.steps.is_none() {
+        meta.steps = inputs.get("steps").and_then(|v| v.as_u64()).map(|v| v as u32);
+    }
+    if meta.cfg_scale.is_none() {
+        meta.cfg_scale = inputs.get("cfg").and_then(|v| v.as_f64());
+    }
+    if meta.seed.is_none() {
+        meta.seed = inputs.get("seed").and_then(|v| v.as_i64());
+    }
+    if meta.sampler.is_empty() {
+        meta.sampler = inputs
+            .get("sampler_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+    }
+}
+
+/// 将 ComfyUI 采样/高分/修复类节点参数按节点分组，避免多个采样节点互相覆盖。
+fn build_comfyui_parameter_group(
+    node_id: &str,
+    class_type: &str,
+    inputs: &serde_json::Value,
+) -> Option<ParameterGroup> {
+    let keys = [
+        ("seed", "Seed"),
+        ("steps", "Steps"),
+        ("cfg", "CFG"),
+        ("sampler_name", "Sampler"),
+        ("scheduler", "Scheduler"),
+        ("denoise", "Denoise"),
+        ("width", "Width"),
+        ("height", "Height"),
+        ("upscale_by", "Upscale by"),
+        ("upscale_model", "Upscale model"),
+        ("model_name", "Model"),
+        ("inpaint_width", "Inpaint width"),
+        ("inpaint_height", "Inpaint height"),
+        ("tile_width", "Tile width"),
+        ("tile_height", "Tile height"),
+    ];
+
+    let params: Vec<ParameterItem> = keys
+        .iter()
+        .filter_map(|(key, label)| format_json_param(inputs.get(*key)).map(|value| ParameterItem {
+            label: (*label).to_string(),
+            value,
+        }))
+        .collect();
+
+    if params.is_empty() {
+        return None;
+    }
+
+    Some(ParameterGroup {
+        title: format!("{} #{}", class_type, node_id),
+        params,
+    })
+}
+
+/// 将 JSON 参数转成适合前端展示的短文本，过滤节点引用数组。
+fn format_json_param(value: Option<&serde_json::Value>) -> Option<String> {
+    let value = value?;
+    if value.as_array().is_some() || value.as_object().is_some() {
+        return None;
+    }
+    if let Some(s) = value.as_str() {
+        return (!s.is_empty()).then(|| s.to_string());
+    }
+    if value.is_null() {
+        return None;
+    }
+    Some(value.to_string())
 }
 
 /// 提取 ComfyUI 模型名称。

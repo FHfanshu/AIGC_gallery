@@ -8,6 +8,7 @@ export const zh: Translations = {
   },
   common: {
     refresh: '刷新',
+    refreshing: '刷新中...',
     save: '保存',
     add: '添加',
   },
@@ -77,6 +78,9 @@ export const zh: Translations = {
     favorite: '收藏',
     favorited: '已收藏',
     confirmDelete: '确认删除？',
+    reparseMetadata: '重新解析元数据',
+    reparsingMetadata: '解析中...',
+    reparseMetadataError: '重新解析失败',
     previewOriginal: '预览原图',
     checkpointHash: '模型哈希：',
     lookingUp: '查询中...',
@@ -114,5 +118,6 @@ export const zh: Translations = {
     exportData: '导出',
     importData: '导入',
     importConfirm: '导入会将数据合并到当前图库，已存在的文件将跳过。确认继续？',
+    backupWorking: '处理中...',
   },
 };

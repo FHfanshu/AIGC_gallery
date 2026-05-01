@@ -49,9 +49,20 @@ export interface ImageMetadata {
   seed: number | null;          // 随机种子
   width: number | null;         // 生成宽度
   height: number | null;        // 生成高度
+  parameter_groups?: ParameterGroup[]; // 按生成阶段/节点分组的参数
   source: string;               // 来源工具（如 "stable-diffusion"）
   characters: CharacterPrompt[]; // 角色提示词列表
   raw: Record<string, string>;  // 原始未解析的键值对
+}
+
+export interface ParameterGroup {
+  title: string;
+  params: ParameterItem[];
+}
+
+export interface ParameterItem {
+  label: string;
+  value: string;
 }
 
 export interface TagRecord {
@@ -103,6 +114,20 @@ export interface ImportResult {
   success: string[];   // 成功导入的文件列表
   skipped: string[];   // 因重复等原因跳过的文件列表
   errors: string[];    // 导入失败的文件列表（含错误信息）
+}
+
+export interface BackupProgress {
+  done: number;
+  total: number;
+  bytes_done: number;
+  total_bytes: number;
+  current: string;
+  finished: boolean;
+}
+
+export interface BackupResult {
+  success: boolean;
+  message: string;
 }
 
 /** 视图类型 — 控制主界面当前显示的页面 */

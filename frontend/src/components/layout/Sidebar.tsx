@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react'; // useState: 本地状态, useEffec
 import { Button, Card, Input } from '../ui'; // UI组件: 按钮、卡片、输入框
 import { truncate } from '../../lib/utils'; // 字符串截断工具
 import { api } from '../../lib/tauri'; // Tauri IPC API封装
+import { confirm } from '@tauri-apps/plugin-dialog';
 import { useI18n } from '../../i18n'; // 国际化Hook
-import type { CivitaiBaseUrl, ImageStats, ImportResult, ImportStrategy, StorageConfig, ViewType } from '../../types'; // 类型定义
+import type { BackupProgress, BackupResult, CivitaiBaseUrl, ImageStats, ImportResult, ImportStrategy, StorageConfig, ViewType } from '../../types'; // 类型定义
 
 /**
  * @component Sidebar
@@ -17,10 +18,14 @@ interface SidebarProps {
   onImportFolder: () => void; // 导入文件夹回调
   importResult: ImportResult | null; // 导入结果
   importProgress: { done: number; total: number } | null; // 后台导入进度
+  backupProgress: BackupProgress | null; // 备份导入/导出进度
+  backupResult: BackupResult | null; // 备份导入/导出结果
+  onBackupProgressReset: () => void; // 清除备份结果
 }
 
 export function Sidebar({
   activeView, onNavigate, stats, onImport, onImportFolder, importResult, importProgress,
+  backupProgress, backupResult, onBackupProgressReset,
 }: SidebarProps) {
   const { t, locale, toggleLocale } = useI18n(); // t: 翻译函数, locale: 当前语言, toggleLocale: 切换语言
   const [showSettings, setShowSettings] = useState(false); // 设置面板展开状态
@@ -30,6 +35,11 @@ export function Sidebar({
   const [civitaiBaseUrl, setCivitaiBaseUrl] = useState<CivitaiBaseUrl>('https://civitai.com');
   const [civitaiKey, setCivitaiKey] = useState('');
   const [hasCivitaiKey, setHasCivitaiKey] = useState(false);
+  const backupPercent = backupProgress && backupProgress.total_bytes > 0
+    ? Math.min(100, Math.round((backupProgress.bytes_done / backupProgress.total_bytes) * 100))
+    : backupProgress && backupProgress.total > 0
+      ? Math.min(100, Math.round((backupProgress.done / backupProgress.total) * 100))
+      : 0;
 
   /**
    * 加载存储配置
@@ -266,6 +276,7 @@ export function Sidebar({
                 <Button
                   size="sm"
                   variant="secondary"
+                  disabled={!!backupProgress}
                   onClick={async () => {
                     try {
                       const { save } = await import('@tauri-apps/plugin-dialog');
@@ -274,8 +285,8 @@ export function Sidebar({
                         filters: [{ name: 'ZIP', extensions: ['zip'] }],
                       });
                       if (!path) return;
-                      const result = await api.exportGallery(path);
-                      alert(result);
+                      onBackupProgressReset();
+                      await api.startExportGallery(path);
                     } catch (e) {
                       console.error('Export failed:', e);
                       alert(`导出失败: ${e}`);
@@ -287,6 +298,7 @@ export function Sidebar({
                 <Button
                   size="sm"
                   variant="secondary"
+                  disabled={!!backupProgress}
                   onClick={async () => {
                     try {
                       const { open } = await import('@tauri-apps/plugin-dialog');
@@ -295,10 +307,9 @@ export function Sidebar({
                         multiple: false,
                       });
                       if (!path) return;
-                      if (!confirm(t.sidebar.importConfirm)) return;
-                      const result = await api.importGallery(path as string);
-                      alert(result);
-                      window.location.reload();
+                      if (!(await confirm(t.sidebar.importConfirm))) return;
+                      onBackupProgressReset();
+                      await api.startImportGallery(path as string);
                     } catch (e) {
                       console.error('Import failed:', e);
                       alert(`导入失败: ${e}`);
@@ -308,6 +319,25 @@ export function Sidebar({
                   {t.sidebar.importData}
                 </Button>
               </div>
+              {backupProgress && (
+                <div className="mt-2 rounded-btn border border-ink-line bg-ink-surface p-2">
+                  <div className="flex items-center justify-between text-xs text-ink-secondary">
+                    <span>{backupProgress.current || t.sidebar.backupWorking}</span>
+                    <span>{backupProgress.total > 0 ? `${backupProgress.done}/${backupProgress.total}` : `${backupPercent}%`}</span>
+                  </div>
+                  <div className="mt-2 h-2 bg-ink-line rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-ink-success rounded-full transition-all duration-200"
+                      style={{ width: `${backupPercent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              {backupResult && (
+                <div className={`mt-2 rounded-btn border p-2 text-xs ${backupResult.success ? 'border-ink-line text-ink-secondary bg-ink-surface' : 'border-red-200 text-ink-danger bg-red-50'}`}>
+                  {backupResult.message}
+                </div>
+              )}
             </div>
           </Card>
         )}

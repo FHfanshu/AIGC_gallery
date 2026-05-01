@@ -85,6 +85,14 @@ export const api = {
   /** 更新图片的正向/反向提示词 */
   updatePrompt: (imageId: number, positivePrompt: string, negativePrompt: string) =>
     invoke('update_prompt', { imageId, positivePrompt, negativePrompt }),
+
+  /** 重新解析图片文件中的 PNG 元数据并刷新数据库记录 */
+  reparseImageMetadata: (imageId: number) =>
+    invoke<ImageRecord>('reparse_image_metadata', { imageId }),
+
+  /** 异步启动全图库元数据重新解析，进度通过 reparse-progress / reparse-finished 事件推送 */
+  startReparseAllMetadata: () =>
+    invoke<void>('start_reparse_all_metadata'),
   
   /** 获取图库统计数据（图片总数、标签总数、模型分布） */
   getStats: () =>
@@ -127,7 +135,15 @@ export const api = {
   exportGallery: (destPath: string) =>
     invoke<string>('export_gallery', { destPath }),
 
+  /** 异步启动图库导出任务，进度通过 export-progress / export-finished 事件推送 */
+  startExportGallery: (destPath: string) =>
+    invoke<void>('start_export_gallery', { destPath }),
+
   /** 从 zip 文件导入图库数据，返回结果描述 */
   importGallery: (zipPath: string) =>
     invoke<string>('import_gallery', { zipPath }),
+
+  /** 异步启动图库导入任务，进度通过 backup-import-progress / backup-import-finished 事件推送 */
+  startImportGallery: (zipPath: string) =>
+    invoke<void>('start_import_gallery', { zipPath }),
 };

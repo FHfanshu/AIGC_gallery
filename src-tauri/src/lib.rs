@@ -1,4 +1,5 @@
 // 应用库入口：模块声明、全局状态定义、Tauri 应用构建
+mod backup;
 mod commands;
 mod config;
 mod db;
@@ -46,6 +47,8 @@ pub fn run() {
             commands::toggle_favorite,
             commands::get_favorites,
             commands::update_prompt,
+            commands::reparse_image_metadata,
+            commands::start_reparse_all_metadata,
             commands::get_storage_config,
             commands::set_storage_dir,
             commands::get_image_base64,
@@ -55,8 +58,10 @@ pub fn run() {
             commands::set_civitai_api_key,
             commands::lookup_civitai_by_hash,
             commands::open_url,
-            commands::export_gallery,
-            commands::import_gallery,
+            backup::export_gallery,
+            backup::start_export_gallery,
+            backup::import_gallery,
+            backup::start_import_gallery,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

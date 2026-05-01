@@ -202,16 +202,10 @@ impl Database {
                          COALESCE(json_extract(new.metadata_json, '$.model'), ''));
              END;
              CREATE TRIGGER images_ad AFTER DELETE ON images BEGIN
-                 INSERT INTO images_fts(images_fts, rowid, prompt, negative_prompt, file_name, metadata_content)
-                 VALUES ('delete', old.id, old.prompt, old.negative_prompt, old.file_name,
-                         COALESCE(json_extract(old.metadata_json, '$.characters'), '') || ' ' ||
-                         COALESCE(json_extract(old.metadata_json, '$.model'), ''));
+                 DELETE FROM images_fts WHERE rowid = old.id;
              END;
              CREATE TRIGGER images_au AFTER UPDATE ON images BEGIN
-                 INSERT INTO images_fts(images_fts, rowid, prompt, negative_prompt, file_name, metadata_content)
-                 VALUES ('delete', old.id, old.prompt, old.negative_prompt, old.file_name,
-                         COALESCE(json_extract(old.metadata_json, '$.characters'), '') || ' ' ||
-                         COALESCE(json_extract(old.metadata_json, '$.model'), ''));
+                 DELETE FROM images_fts WHERE rowid = old.id;
                  INSERT INTO images_fts(rowid, prompt, negative_prompt, file_name, metadata_content)
                  VALUES (new.id, new.prompt, new.negative_prompt, new.file_name,
                          COALESCE(json_extract(new.metadata_json, '$.characters'), '') || ' ' ||
@@ -423,6 +417,13 @@ impl Database {
         Ok(img)
     }
 
+    pub fn get_all_image_ids(&self) -> Result<Vec<i64>, String> {
+        let mut stmt = self.conn.prepare("SELECT id FROM images ORDER BY created_at DESC, id DESC")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| row.get::<_, i64>(0)).map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
     pub fn get_images_by_tag(&self, tag_name: &str, offset: i64, limit: i64) -> Result<Vec<ImageRecord>, String> {
         let mut stmt = self.conn.prepare(
             "SELECT i.id, i.file_path, i.file_name, i.file_hash, i.width, i.height,
@@ -627,6 +628,24 @@ impl Database {
         self.conn.execute(
             "UPDATE images SET prompt = ?1, negative_prompt = ?2 WHERE id = ?3",
             params![positive_prompt, negative_prompt, image_id],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn update_image_metadata(
+        &self,
+        image_id: i64,
+        width: u32,
+        height: u32,
+        prompt: &str,
+        negative_prompt: &str,
+        metadata_json: &str,
+        source_type: &str,
+    ) -> Result<(), String> {
+        // 重新解析会改变 prompt/metadata，依赖 UPDATE trigger 同步 FTS 索引。
+        self.conn.execute(
+            "UPDATE images SET width = ?1, height = ?2, prompt = ?3, negative_prompt = ?4, metadata_json = ?5, source_type = ?6 WHERE id = ?7",
+            params![width, height, prompt, negative_prompt, metadata_json, source_type, image_id],
         ).map_err(|e| e.to_string())?;
         Ok(())
     }

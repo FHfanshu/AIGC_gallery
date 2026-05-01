@@ -13,7 +13,7 @@ import { ImageDetail } from './components/gallery/ImageDetail';
 import { useGallery, useFavorites, useStats, useNSFWFilter } from './hooks';
 import { api } from './lib/tauri';
 import { useI18n } from './i18n';
-import type { ImageRecord, ImportResult, ViewType } from './types';
+import type { BackupProgress, BackupResult, ImageRecord, ImportResult, ViewType } from './types';
 
 function App() {
   // 当前视图：gallery（画廊）/ favorites（收藏）
@@ -24,8 +24,12 @@ function App() {
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   // 导入进度：后端通过事件推送 { done, total }
   const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
+  const [backupProgress, setBackupProgress] = useState<BackupProgress | null>(null);
+  const [backupResult, setBackupResult] = useState<BackupResult | null>(null);
+  const [reparseProgress, setReparseProgress] = useState<{ done: number; total: number } | null>(null);
   // 拖拽文件悬停状态（用于显示全屏遮罩）
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false); // 顶部刷新按钮反馈状态
 
   const nsfw = useNSFWFilter();
   const gallery = useGallery();
@@ -53,9 +57,43 @@ function App() {
         stats.loadStats();
       }
     }).then(unlisten => unlisteners.push(unlisten));
+    listen<BackupProgress>('export-progress', event => {
+      setBackupProgress(event.payload.finished ? null : event.payload);
+    }).then(unlisten => unlisteners.push(unlisten));
+    listen<BackupResult>('export-finished', event => {
+      setBackupProgress(null);
+      setBackupResult(event.payload);
+      setTimeout(() => setBackupResult(null), 8000);
+    }).then(unlisten => unlisteners.push(unlisten));
+    listen<BackupProgress>('backup-import-progress', event => {
+      setBackupProgress(event.payload.finished ? null : event.payload);
+    }).then(unlisten => unlisteners.push(unlisten));
+    listen<BackupResult>('backup-import-finished', event => {
+      setBackupProgress(null);
+      setBackupResult(event.payload);
+      setTimeout(() => setBackupResult(null), 8000);
+      if (event.payload.success) {
+        gallery.loadImages(true);
+        favorites.loadFavorites();
+        stats.loadStats();
+      }
+    }).then(unlisten => unlisteners.push(unlisten));
+    listen<{ done: number; total: number }>('reparse-progress', event => {
+      setReparseProgress({ done: event.payload.done, total: event.payload.total });
+    }).then(unlisten => unlisteners.push(unlisten));
+    listen<{ total: number }>('reparse-finished', () => {
+      setReparseProgress(null);
+      setIsRefreshing(false);
+      gallery.loadImages(true);
+      favorites.loadFavorites();
+      stats.loadStats();
+      if (selectedImage) {
+        api.getImageDetail(selectedImage.id).then(setSelectedImage).catch(() => {});
+      }
+    }).then(unlisten => unlisteners.push(unlisten));
 
     return () => { unlisteners.forEach(unlisten => unlisten()); };
-  }, [gallery, stats]);
+  }, [favorites, gallery, selectedImage, stats]);
 
   // 监听操作系统级别的文件拖拽事件（Tauri 原生拖放）
   useEffect(() => {
@@ -179,6 +217,35 @@ function App() {
     }
   }, [gallery, selectedImage]);
 
+  // 重新解析元数据：写回数据库后刷新列表、详情和统计。
+  const handleReparseMetadata = useCallback(async (imageId: number) => {
+    try {
+      const updated = await api.reparseImageMetadata(imageId);
+      gallery.loadImages(true);
+      stats.loadStats();
+      if (selectedImage?.id === imageId) {
+        setSelectedImage(updated);
+      }
+    } catch (e) {
+      console.error('Reparse metadata failed:', e);
+      throw e;
+    }
+  }, [gallery, stats, selectedImage]);
+
+  // 顶部刷新：批量重新解析图库元数据，进度通过后端事件反馈。
+  const handleRefresh = useCallback(async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    setReparseProgress({ done: 0, total: 0 });
+    try {
+      await api.startReparseAllMetadata();
+    } catch (e) {
+      setIsRefreshing(false);
+      setReparseProgress(null);
+      console.error('Batch reparse metadata failed:', e);
+    }
+  }, [isRefreshing]);
+
   // 视图导航切换
   const handleNavigate = useCallback((newView: ViewType) => {
     setView(newView);
@@ -204,6 +271,12 @@ function App() {
         onImportFolder={handleImportFolder}
         importResult={importResult}
         importProgress={importProgress}
+        backupProgress={backupProgress}
+        backupResult={backupResult}
+        onBackupProgressReset={() => {
+          setBackupProgress(null);
+          setBackupResult(null);
+        }}
       />
 
       {/* 主内容区：搜索栏 + 图片网格 */}
@@ -222,11 +295,9 @@ function App() {
           nsfwTags={[...nsfw.nsfwTags]}
           onAddNSFWTag={nsfw.addNSFWTag}
           onRemoveNSFWTag={nsfw.removeNSFWTag}
-          onRefresh={() => {
-            gallery.refresh();
-            favorites.refresh();
-            stats.refresh();
-          }}
+          onRefresh={handleRefresh}
+          isRefreshing={isRefreshing}
+          refreshProgress={reparseProgress ?? undefined}
           sortBy={gallery.sortBy}
           onSortByChange={gallery.setSortBy}
           sortDir={gallery.sortDir}
@@ -254,6 +325,7 @@ function App() {
           onDelete={handleDelete}
           onToggleFavorite={handleToggleFavorite}
           onUpdatePrompt={handleUpdatePrompt}
+          onReparseMetadata={handleReparseMetadata}
         />
       )}
 

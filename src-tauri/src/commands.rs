@@ -11,7 +11,7 @@ use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 use walkdir::WalkDir;
 
 /// 图片导入结果统计
@@ -21,6 +21,7 @@ pub struct ImportResult {
     pub skipped: Vec<String>,
     pub errors: Vec<String>,
 }
+
 
 #[derive(Debug, Clone)]
 struct ImportContext {
@@ -486,6 +487,155 @@ pub fn update_prompt(
     db.update_prompt(image_id, &positive_prompt, &negative_prompt)
 }
 
+/// 按当前图片文件重新解析 PNG 元数据，并写回数据库。
+#[tauri::command]
+pub fn reparse_image_metadata(
+    state: State<AppState>,
+    image_id: i64,
+) -> Result<ImageRecord, String> {
+    let image = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_image_by_id(image_id)?
+    };
+
+    let source_path = image
+        .stored_path
+        .as_deref()
+        .filter(|path| !path.is_empty())
+        .unwrap_or(&image.file_path);
+    let path = Path::new(source_path);
+    if !path.exists() {
+        return Err(format!("Image file not found: {}", source_path));
+    }
+
+    let meta = metadata::parse_png_metadata(path)?;
+    let (width, height) = if meta.width.unwrap_or(0) > 0 && meta.height.unwrap_or(0) > 0 {
+        (meta.width.unwrap_or(0), meta.height.unwrap_or(0))
+    } else {
+        metadata::get_image_dimensions(path).unwrap_or((image.width, image.height))
+    };
+    let metadata_json = serde_json::to_string(&meta).map_err(|e| e.to_string())?;
+
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.update_image_metadata(
+        image_id,
+        width,
+        height,
+        &meta.prompt,
+        &meta.negative_prompt,
+        &metadata_json,
+        &meta.source,
+    )?;
+    db.get_image_by_id(image_id)
+}
+
+/// 批量重新解析图库中的 PNG 元数据，并通过进度事件反馈。
+#[tauri::command]
+pub fn start_reparse_all_metadata(state: State<AppState>, app: AppHandle) -> Result<(), String> {
+    let db_state = Arc::clone(&state.db);
+    std::thread::spawn(move || {
+        let ids = {
+            let db = db_state.lock().map_err(|e| e.to_string());
+            match db {
+                Ok(db) => match db.get_all_image_ids() {
+                    Ok(ids) => ids,
+                    Err(e) => {
+                        log::error!("start_reparse_all_metadata failed to load ids: {}", e);
+                        return;
+                    }
+                },
+                Err(e) => {
+                    log::error!("start_reparse_all_metadata lock error: {}", e);
+                    return;
+                }
+            }
+        };
+
+        let total = ids.len();
+        for (index, image_id) in ids.into_iter().enumerate() {
+            let _ = app.emit("reparse-progress", serde_json::json!({
+                "done": index,
+                "total": total,
+                "current": image_id,
+            }));
+
+            let image = {
+                let db = match db_state.lock() {
+                    Ok(db) => db,
+                    Err(e) => {
+                        log::error!("start_reparse_all_metadata lock error: {}", e);
+                        continue;
+                    }
+                };
+                match db.get_image_by_id(image_id) {
+                    Ok(img) => img,
+                    Err(e) => {
+                        log::error!("start_reparse_all_metadata load image {} failed: {}", image_id, e);
+                        continue;
+                    }
+                }
+            };
+
+            let source_path = image
+                .stored_path
+                .as_deref()
+                .filter(|path| !path.is_empty())
+                .unwrap_or(&image.file_path)
+                .to_string();
+            let path = Path::new(&source_path);
+            if !path.exists() {
+                log::warn!("start_reparse_all_metadata missing file: {}", source_path);
+                continue;
+            }
+
+            let meta = match metadata::parse_png_metadata(path) {
+                Ok(meta) => meta,
+                Err(e) => {
+                    log::warn!("start_reparse_all_metadata parse failed for {}: {}", source_path, e);
+                    continue;
+                }
+            };
+            let (width, height) = if meta.width.unwrap_or(0) > 0 && meta.height.unwrap_or(0) > 0 {
+                (meta.width.unwrap_or(0), meta.height.unwrap_or(0))
+            } else {
+                metadata::get_image_dimensions(path).unwrap_or((image.width, image.height))
+            };
+            let metadata_json = match serde_json::to_string(&meta) {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!("start_reparse_all_metadata serialize failed for {}: {}", source_path, e);
+                    continue;
+                }
+            };
+
+            let db = match db_state.lock() {
+                Ok(db) => db,
+                Err(e) => {
+                    log::error!("start_reparse_all_metadata lock error: {}", e);
+                    continue;
+                }
+            };
+            if let Err(e) = db.update_image_metadata(
+                image_id,
+                width,
+                height,
+                &meta.prompt,
+                &meta.negative_prompt,
+                &metadata_json,
+                &meta.source,
+            ) {
+                log::warn!("start_reparse_all_metadata update failed for {}: {}", image_id, e);
+            }
+        }
+
+        let _ = app.emit("reparse-finished", serde_json::json!({
+            "total": total,
+        }));
+    });
+
+    Ok(())
+}
+
 const CIVITAI_SERVICE: &str = "aigc-gallery";
 const CIVITAI_KEY_USER: &str = "civitai-api-key";
 
@@ -719,153 +869,4 @@ pub fn get_image_base64(state: State<AppState>, image_id: i64, use_thumbnail: bo
     }
 
     Err(format!("No existing image file found for image id {}", image_id))
-}
-
-/// 导出图库数据到 .zip 文件
-///
-/// 将 gallery.db、images/、thumbnails/、config.json 打包到用户指定的 zip 文件。
-/// 导出路径由前端通过系统文件对话框传入。
-#[tauri::command]
-pub fn export_gallery(dest_path: String) -> Result<String, String> {
-    let root = crate::config::resolve_storage_dir(&crate::config::load_config());
-    let dest = PathBuf::from(&dest_path);
-
-    let file = fs::File::create(&dest).map_err(|e| format!("创建导出文件失败: {}", e))?;
-    let mut zip = zip::ZipWriter::new(file);
-    let options = zip::write::FileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-
-    // 收集要打包的文件：config.json、gallery.db、images/*、thumbnails/*
-    let mut entries: Vec<(PathBuf, String)> = Vec::new();
-
-    // config.json — 归档根为根目录
-    let cfg_path = crate::config::default_storage_dir().join("config.json");
-    if cfg_path.exists() {
-        entries.push((cfg_path, "config.json".to_string()));
-    }
-
-    // gallery.db
-    let db_path = root.join("gallery.db");
-    if db_path.exists() {
-        entries.push((db_path, "gallery.db".to_string()));
-    }
-
-    // images/ 目录
-    let images_dir = root.join("images");
-    if images_dir.is_dir() {
-        for entry in WalkDir::new(&images_dir).min_depth(1).into_iter().filter_map(|e| e.ok()) {
-            if entry.file_type().is_file() {
-                let rel = format!("images/{}", entry.path().strip_prefix(&images_dir).unwrap().to_string_lossy());
-                entries.push((entry.into_path(), rel));
-            }
-        }
-    }
-
-    // thumbnails/ 目录
-    let thumbs_dir = root.join("thumbnails");
-    if thumbs_dir.is_dir() {
-        for entry in WalkDir::new(&thumbs_dir).min_depth(1).into_iter().filter_map(|e| e.ok()) {
-            if entry.file_type().is_file() {
-                let rel = format!("thumbnails/{}", entry.path().strip_prefix(&thumbs_dir).unwrap().to_string_lossy());
-                entries.push((entry.into_path(), rel));
-            }
-        }
-    }
-
-    let total = entries.len();
-    for (path, name) in &entries {
-        zip.start_file(name, options).map_err(|e| e.to_string())?;
-        let data = fs::read(path).map_err(|e| format!("读取 {} 失败: {}", path.display(), e))?;
-        use std::io::Write;
-        zip.write_all(&data).map_err(|e| e.to_string())?;
-    }
-
-    zip.finish().map_err(|e| e.to_string())?;
-    Ok(format!("导出成功：{} 个文件 → {}", total, dest_path))
-}
-
-/// 导入图库数据从 .zip 文件
-///
-/// 从用户选择的 zip 文件恢复 gallery.db、images/、thumbnails/ 到当前图库目录。
-/// 已存在的文件将跳过（不覆盖）；DB 被替换前会先备份为 gallery.db.bak。
-#[tauri::command]
-pub fn import_gallery(app: AppHandle, zip_path: String) -> Result<String, String> {
-    let root = crate::config::resolve_storage_dir(&crate::config::load_config());
-    let src = PathBuf::from(&zip_path);
-
-    if !src.exists() {
-        return Err("zip 文件不存在".to_string());
-    }
-
-    let file = fs::File::open(&src).map_err(|e| format!("打开 zip 文件失败: {}", e))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("解析 zip 失败: {}", e))?;
-
-    let mut restored = 0u32;
-    let mut skipped = 0u32;
-
-    for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
-        let entry_name = entry.mangled_name();
-
-        // 安全校验：拒绝路径穿越
-        if entry_name.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
-            skipped += 1;
-            continue;
-        }
-
-        let name_str = entry_name.to_string_lossy().replace('\\', "/");
-
-        if entry.is_dir() {
-            skipped += 1;
-            continue;
-        }
-
-        // gallery.db — 备份旧 DB 后替换
-        if name_str == "gallery.db" {
-            let dest = root.join("gallery.db");
-            if dest.exists() {
-                let backup = root.join("gallery.db.bak");
-                fs::copy(&dest, &backup).map_err(|e| format!("备份 DB 失败: {}", e))?;
-            }
-            let mut out = fs::File::create(&dest).map_err(|e| e.to_string())?;
-            std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
-            restored += 1;
-            continue;
-        }
-
-        // config.json — 跳过（不覆盖用户当前配置）
-        if name_str == "config.json" {
-            skipped += 1;
-            continue;
-        }
-
-        // images/ 或 thumbnails/ 下的文件；拒绝写入图库根目录下的其他任意路径。
-        if !(name_str.starts_with("images/") || name_str.starts_with("thumbnails/")) {
-            skipped += 1;
-            continue;
-        }
-        let dest = root.join(&name_str);
-        if dest.exists() {
-            skipped += 1;
-            continue;
-        }
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        let mut out = fs::File::create(&dest).map_err(|e| e.to_string())?;
-        std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
-        restored += 1;
-    }
-
-    // 重新初始化数据库连接，使导入的数据立即可用
-    match crate::db::Database::new() {
-        Ok(new_db) => {
-            let state = app.state::<AppState>();
-            let mut db_lock = state.db.lock().map_err(|e| e.to_string())?;
-            *db_lock = new_db;
-        }
-        Err(e) => return Err(format!("导入文件已恢复，但重新加载数据库失败: {}", e)),
-    }
-
-    Ok(format!("导入成功：恢复 {} 个文件，跳过 {} 个", restored, skipped))
 }
