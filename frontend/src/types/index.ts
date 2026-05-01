@@ -19,6 +19,7 @@ export interface ImageRecord {
   metadata_json: string;         // 完整元数据的 JSON 字符串
   created_at: string;            // 创建时间（ISO 格式字符串）
   tags: string[];                // 关联的标签列表
+  storage_mode: string;          // 存储模式：copy / hardlink
   is_favorite: boolean;          // 是否已收藏
 }
 
@@ -39,6 +40,9 @@ export interface ImageMetadata {
   prompt: string;               // 正向提示词
   negative_prompt: string;      // 反向提示词
   model: string;                // 使用的模型名称
+  model_hash?: string;          // Checkpoint 哈希，部分来源才提供
+  loras?: LoRAMetadata[];       // LoRA 模型列表，部分来源才提供
+  novelai?: NovelAIExtendedMetadata; // NovelAI 专属扩展字段
   sampler: string;              // 采样器名称
   steps: number | null;         // 采样步数
   cfg_scale: number | null;     // CFG 引导强度
@@ -48,6 +52,33 @@ export interface ImageMetadata {
   source: string;               // 来源工具（如 "stable-diffusion"）
   characters: CharacterPrompt[]; // 角色提示词列表
   raw: Record<string, string>;  // 原始未解析的键值对
+}
+
+export interface LoRAMetadata {
+  name: string;                   // LoRA 名称
+  weight?: string;                // prompt 或节点中的权重
+  hash?: string;                  // LoRA 哈希，部分来源才提供
+}
+
+export interface NovelAIReferenceMetadata {
+  kind: 'character' | 'vibe' | 'director';
+  label: string;
+  descriptions: string[];
+  strengths: number[];
+  information_extracted: number[];
+  secondary_strengths: number[];
+}
+
+export interface NovelAIExtendedMetadata {
+  software?: string;
+  source?: string;
+  signed_hash?: string;
+  request_type?: string;
+  generation_time?: string;
+  negative_prompt?: string;
+  uncond_per_vibe?: boolean;
+  wonky_vibe_correlation?: boolean;
+  references: NovelAIReferenceMetadata[];
 }
 
 /**
@@ -68,4 +99,29 @@ export interface ImportResult {
 }
 
 /** 视图类型 — 控制主界面当前显示的页面 */
+export interface StorageConfig {
+  storage_dir: string | null;
+  resolved_dir: string;
+  import_strategy: 'copy' | 'hardlink_then_copy';
+  civitai_base_url: 'https://civitai.com' | 'https://civitai.green' | 'https://civitai.red';
+}
+
+export type ImportStrategy = StorageConfig['import_strategy'];
+export type CivitaiBaseUrl = StorageConfig['civitai_base_url'];
+
+export interface CivitaiKeyStatus {
+  has_key: boolean;
+}
+
+export interface CivitaiLookupResult {
+  model_version_id: number | null;
+  model_id: number | null;
+  version_name: string | null;
+  model_name: string | null;
+  model_type: string | null;
+  nsfw: unknown;
+  trained_words: string[];
+  raw: unknown;
+}
+
 export type ViewType = 'gallery' | 'favorites' | 'settings';

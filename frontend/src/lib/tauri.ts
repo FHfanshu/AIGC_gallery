@@ -2,7 +2,7 @@
 // 通过 @tauri-apps/api/core 的 invoke 方法实现跨进程通信
 
 import { invoke } from '@tauri-apps/api/core';
-import type { ImageRecord, ImageStats, ImportResult } from '../types';
+import type { CivitaiBaseUrl, CivitaiKeyStatus, CivitaiLookupResult, ImageRecord, ImageStats, ImportResult, ImportStrategy, StorageConfig } from '../types';
 
 /** api — 所有 Tauri IPC 调用的统一入口对象 */
 export const api = {
@@ -19,16 +19,16 @@ export const api = {
     invoke<ImportResult>('import_images', { filePaths }),
 
   /** 异步启动批量导入图片任务（不阻塞前端） */
-  startImportImages: (filePaths: string[]) =>
-    invoke<void>('start_import_images', { filePaths }),
+  startImportImages: (filePaths: string[], importStrategy?: ImportStrategy) =>
+    invoke<void>('start_import_images', { filePaths, importStrategy: importStrategy || null }),
   
   /** 导入整个文件夹中的图片（同步阻塞） */
   importFolder: (folderPath: string) =>
     invoke<ImportResult>('import_folder', { folderPath }),
 
   /** 异步启动导入文件夹任务（不阻塞前端） */
-  startImportFolder: (folderPath: string) =>
-    invoke<void>('start_import_folder', { folderPath }),
+  startImportFolder: (folderPath: string, importStrategy?: ImportStrategy) =>
+    invoke<void>('start_import_folder', { folderPath, importStrategy: importStrategy || null }),
   
   /** 删除指定图片（同时清理关联的缩略图和元数据） */
   deleteImage: (id: number) =>
@@ -52,13 +52,25 @@ export const api = {
 
   /** 获取当前存储目录配置 */
   getStorageConfig: () =>
-    invoke<{ storage_dir: string | null; resolved_dir: string }>('get_storage_config'),
+    invoke<StorageConfig>('get_storage_config'),
 
-  /** 设置自定义存储目录（传 null 恢复默认） */
-  setStorageDir: (dir: string | null) =>
-    invoke<{ storage_dir: string | null; resolved_dir: string }>('set_storage_dir', { dir }),
+  /** 设置自定义存储目录（传 null 恢复默认）和导入策略 */
+  setStorageDir: (dir: string | null, importStrategy?: ImportStrategy, civitaiBaseUrl?: CivitaiBaseUrl) =>
+    invoke<StorageConfig>('set_storage_dir', { dir, importStrategy: importStrategy || null, civitaiBaseUrl: civitaiBaseUrl || null }),
 
   /** 获取图片的 Base64 编码数据，用于前端显示 */
   getImageBase64: (imageId: number, useThumbnail = true) =>
     invoke<string>('get_image_base64', { imageId, useThumbnail }),
+
+  /** 查询系统凭据库里是否保存了 Civitai API Key */
+  getCivitaiKeyStatus: () =>
+    invoke<CivitaiKeyStatus>('get_civitai_key_status'),
+
+  /** 保存 Civitai API Key 到系统凭据库，传空字符串可清除 */
+  setCivitaiApiKey: (apiKey: string) =>
+    invoke<CivitaiKeyStatus>('set_civitai_api_key', { apiKey }),
+
+  /** 通过模型文件 hash 查询 Civitai 模型版本信息 */
+  lookupCivitaiByHash: (hash: string) =>
+    invoke<CivitaiLookupResult | null>('lookup_civitai_by_hash', { hash }),
 };

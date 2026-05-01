@@ -6,6 +6,8 @@ import { useState, useRef, useEffect } from 'react';
 import { Input } from '../ui';
 import { useI18n, tReplace } from '../../i18n';
 
+import type { SortField, SortDirection } from '../../hooks/useGallery';
+
 interface HeaderProps {
   searchQuery: string;
   setSearchQuery: (q: string) => void;
@@ -15,12 +17,18 @@ interface HeaderProps {
   nsfwTags: string[];
   onAddNSFWTag: (tag: string) => void;
   onRemoveNSFWTag: (tag: string) => void;
+  onRefresh: () => void; // 刷新图库回调
+  sortBy: SortField;
+  onSortByChange: (field: SortField) => void;
+  sortDir: SortDirection;
+  onSortDirChange: (dir: SortDirection) => void;
 }
 
 /** 顶部栏：搜索框 + NSFW过滤控制 + 图片计数 */
 export function Header({
   searchQuery, setSearchQuery, imageCount,
-  hideNSFW, onToggleNSFW, nsfwTags, onAddNSFWTag, onRemoveNSFWTag,
+  hideNSFW, onToggleNSFW, nsfwTags, onAddNSFWTag, onRemoveNSFWTag, onRefresh,
+  sortBy, onSortByChange, sortDir, onSortDirChange,
 }: HeaderProps) {
   const { t } = useI18n();
   const [showNSFWPanel, setShowNSFWPanel] = useState(false); // NSFW标签面板显隐
@@ -67,38 +75,57 @@ export function Header({
       </div>
 
 
+      <button
+        onClick={onRefresh}
+        title={t.common.refresh}
+        className="w-8 h-8 rounded-full flex items-center justify-center text-ink-faint hover:text-ink-muted hover:bg-ink-surface transition-colors"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="23 4 23 10 17 10" />
+          <polyline points="1 20 1 14 7 14" />
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
+          <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14" />
+        </svg>
+      </button>
+
       {/* NSFW控制区 */}
       <div className="relative flex-shrink-0" ref={panelRef}>
         <div className="flex items-center gap-1">
           {/* NSFW显示/隐藏切换按钮 */}
           <button
             onClick={onToggleNSFW}
-            title={hideNSFW ? 'NSFW hidden' : 'NSFW visible — click to hide'}
-            className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-150 ${
+            title={hideNSFW ? t.header.nsfwHidden : t.header.nsfwVisible}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-btn text-xs font-medium transition-all duration-150 ${
               hideNSFW
-                ? 'text-ink-faint hover:text-ink-muted'
-                : 'text-ink-danger bg-red-50'
+                ? 'text-ink-faint hover:text-ink-muted hover:bg-ink-surface'
+                : 'text-ink-danger bg-red-50 hover:bg-red-100'
             }`}
           >
             {hideNSFW ? (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
-                <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
-                <line x1="1" y1="1" x2="23" y2="23" />
-                <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
-              </svg>
+              <>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                  <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                  <line x1="1" y1="1" x2="23" y2="23" />
+                  <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+                </svg>
+                <span>NSFW</span>
+              </>
             ) : (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
+              <>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+                <span>NSFW</span>
+              </>
             )}
           </button>
 
           {/* NSFW标签编辑按钮 */}
           <button
             onClick={() => setShowNSFWPanel(prev => !prev)}
-            title="Edit NSFW tags list"
+            title={t.header.editNsfwTags}
             className="w-7 h-7 rounded-full flex items-center justify-center text-ink-faint hover:text-ink-muted transition-colors"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -112,7 +139,7 @@ export function Header({
         {showNSFWPanel && (
           <div className="absolute right-0 top-full mt-2 w-80 max-h-96 bg-ink-bg border border-ink-line rounded-card p-4 z-50 overflow-hidden flex flex-col shadow-lg">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-ink">NSFW Tags</h3>
+              <h3 className="text-sm font-semibold text-ink">{t.header.nsfwTags}</h3>
               <span className="text-caption text-ink-muted">{nsfwTags.length}</span>
             </div>
 
@@ -123,14 +150,14 @@ export function Header({
                 value={newTag}
                 onChange={e => setNewTag(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleAddTag()}
-                placeholder="Add tag..."
+                placeholder={t.header.addTagPlaceholder}
                 className="flex-1 px-2.5 py-1.5 text-xs rounded-btn border border-ink-line bg-ink-surface text-ink placeholder-ink-faint focus-ring"
               />
               <button
                 onClick={handleAddTag}
                 className="px-3 py-1.5 text-xs rounded-btn bg-ink text-white hover:bg-ink/90 transition-colors"
               >
-                Add
+                {t.common.add}
               </button>
             </div>
 
@@ -155,6 +182,36 @@ export function Header({
             </div>
           </div>
         )}
+      </div>
+
+      {/* 排序控制 */}
+      <div className="flex items-center gap-1 flex-shrink-0">
+        <select
+          value={sortBy}
+          onChange={e => onSortByChange(e.target.value as SortField)}
+          className="px-2 py-1 text-xs rounded-btn border border-ink-line bg-ink-bg text-ink-secondary outline-none focus:border-ink-muted"
+        >
+          <option value="created_at">{t.header.sortTime}</option>
+          <option value="file_name">{t.header.sortFileName}</option>
+          <option value="source_type">{t.header.sortSource}</option>
+          <option value="dimensions">{t.header.sortDimensions}</option>
+          <option value="aspect_ratio">{t.header.sortRatio}</option>
+          <option value="model">{t.header.sortModel}</option>
+          <option value="prompt">{t.header.sortPrompt}</option>
+        </select>
+        <button
+          onClick={() => onSortDirChange(sortDir === 'asc' ? 'desc' : 'asc')}
+          className="w-7 h-7 rounded-btn flex items-center justify-center text-ink-muted hover:text-ink border border-ink-line hover:border-ink-muted transition-colors"
+          title={sortDir === 'asc' ? t.header.sortAsc : t.header.sortDesc}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            {sortDir === 'asc' ? (
+              <><line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" /></>
+            ) : (
+              <><line x1="12" y1="5" x2="12" y2="19" /><polyline points="19 12 12 19 5 12" /></>
+            )}
+          </svg>
+        </button>
       </div>
 
       {/* 图片计数 */}

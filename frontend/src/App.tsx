@@ -2,7 +2,7 @@
 // 负责视图路由（画廊/收藏）、图片导入、拖拽上传、事件编排
 // 组合 Sidebar + Header + GalleryGrid + ImageDetail 四大布局区域
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
@@ -12,6 +12,7 @@ import { GalleryGrid } from './components/gallery/GalleryGrid';
 import { ImageDetail } from './components/gallery/ImageDetail';
 import { useGallery, useFavorites, useStats, useNSFWFilter } from './hooks';
 import { api } from './lib/tauri';
+import { useI18n } from './i18n';
 import type { ImageRecord, ImportResult, ViewType } from './types';
 
 function App() {
@@ -30,6 +31,9 @@ function App() {
   const gallery = useGallery();
   const favorites = useFavorites();
   const stats = useStats();
+  const { t } = useI18n();
+  const dropCleanupRef = useRef<(() => void) | null>(null);
+  const handleDropFilesRef = useRef<(files: string[]) => void>(() => {});
 
   // 监听后端推送的导入进度和完成事件
   useEffect(() => {
@@ -55,7 +59,10 @@ function App() {
 
   // 监听操作系统级别的文件拖拽事件（Tauri 原生拖放）
   useEffect(() => {
-    let cleanup: (() => void) | undefined;
+    let disposed = false;
+    dropCleanupRef.current?.();
+    dropCleanupRef.current = null;
+
     try {
       getCurrentWindow().onDragDropEvent((event) => {
         if (event.payload.type === 'over') {
@@ -67,16 +74,26 @@ function App() {
             (p: string) => p.toLowerCase().endsWith('.png')
           );
           if (pngPaths.length > 0) {
-            handleDropFiles(pngPaths);
+            handleDropFilesRef.current(pngPaths);
           }
         } else {
           setIsDraggingOver(false);
         }
-      }).then(fn => { cleanup = fn; });
+      }).then(fn => {
+        if (disposed) {
+          fn();
+        } else {
+          dropCleanupRef.current = fn;
+        }
+      });
     } catch {
       // 非 Tauri 环境（如浏览器开发）忽略
     }
-    return () => { cleanup?.(); };
+    return () => {
+      disposed = true;
+      dropCleanupRef.current?.();
+      dropCleanupRef.current = null;
+    };
   }, []);
 
   // 通过文件对话框选择 PNG 文件导入
@@ -116,7 +133,11 @@ function App() {
     } catch (e) {
       console.error('Drop import failed:', e);
     }
-  }, [gallery, stats]);
+  }, []);
+
+  useEffect(() => {
+    handleDropFilesRef.current = handleDropFiles;
+  }, [handleDropFiles]);
 
   // 删除图片：关闭详情面板，刷新统计
   const handleDelete = useCallback(async (id: number) => {
@@ -192,10 +213,22 @@ function App() {
           setSearchQuery={gallery.setSearchQuery}
           imageCount={currentImages.length}
           hideNSFW={nsfw.hideNSFW}
-          onToggleNSFW={nsfw.toggleNSFW}
+          onToggleNSFW={() => {
+            nsfw.toggleNSFW();
+            setSelectedImage(null);
+          }}
           nsfwTags={[...nsfw.nsfwTags]}
           onAddNSFWTag={nsfw.addNSFWTag}
           onRemoveNSFWTag={nsfw.removeNSFWTag}
+          onRefresh={() => {
+            gallery.refresh();
+            favorites.refresh();
+            stats.refresh();
+          }}
+          sortBy={gallery.sortBy}
+          onSortByChange={gallery.setSortBy}
+          sortDir={gallery.sortDir}
+          onSortDirChange={gallery.setSortDir}
         />
 
         <GalleryGrid
@@ -205,7 +238,9 @@ function App() {
           selectedId={selectedImage?.id ?? null}
           onSelect={setSelectedImage}
           onToggleFavorite={handleToggleFavorite}
+          onHideImage={nsfw.hideImage}
           onLoadMore={gallery.loadMore}
+          onViewportCapacityChange={gallery.setLoadLimit}
         />
       </main>
 
@@ -225,10 +260,10 @@ function App() {
         <div className="fixed inset-0 z-[100] bg-ink-bg/80 backdrop-blur-sm flex items-center justify-center pointer-events-none">
           <div className="rounded-card border-2 border-dashed border-ink-muted px-12 py-8 bg-ink-bg">
             <p className="font-display font-bold text-xl text-ink text-center">
-              Drop PNG files here
+              {t.import.dropHere}
             </p>
             <p className="text-sm text-ink-muted text-center mt-2">
-              Images will be imported with metadata auto-detected
+              {t.import.dropHint}
             </p>
           </div>
         </div>
