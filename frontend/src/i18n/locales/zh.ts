@@ -1,3 +1,5 @@
+// 中文翻译文件
+// 与 en.ts 结构完全一致，类型由 en.ts 的 Translations 约束
 import type { Translations } from './en';
 
 export const zh: Translations = {
@@ -29,6 +31,7 @@ export const zh: Translations = {
     searchPlaceholder: '搜索 prompt、文件名...',
     filtering: '筛选',
     count: '{count} 张图片',
+    hideNSFW: '隐藏NSFW',
   },
   detail: {
     imageDetail: '图片详情',

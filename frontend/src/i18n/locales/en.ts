@@ -1,3 +1,6 @@
+// 英文翻译文件
+// 定义所有 UI 文本的英文版本，同时作为 Translations 类型的基准
+
 export const en = {
   app: {
     title: 'AIGC Gallery',
@@ -27,6 +30,7 @@ export const en = {
     searchPlaceholder: 'Search prompts, filenames...',
     filtering: 'Filtering',
     count: '{count} images',
+    hideNSFW: 'Hide NSFW',
   },
   detail: {
     imageDetail: 'Image Detail',
@@ -63,4 +67,5 @@ export const en = {
   },
 } as const;
 
+/** 翻译类型 — 从 en 对象自动推断，确保所有语言文件结构一致 */
 export type Translations = typeof en;

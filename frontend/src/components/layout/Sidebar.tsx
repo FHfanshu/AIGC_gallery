@@ -1,45 +1,35 @@
-import { useState, useEffect } from 'react';
-import { NeuButton, NeuCard, NeuInput, NeuTag } from '../ui';
-import { truncate } from '../../lib/utils';
-import { api } from '../../lib/tauri';
-import { useI18n } from '../../i18n';
-import type { ImageStats, TagRecord, ImportResult } from '../../types';
-import type { ViewType } from '../../types';
+import { useState, useEffect, useRef } from 'react'; // useState: 本地状态, useEffect: 副作用, useRef: DOM引用
+import { Button, Card, Input } from '../ui'; // UI组件: 按钮、卡片、输入框
+import { truncate } from '../../lib/utils'; // 字符串截断工具
+import { api } from '../../lib/tauri'; // Tauri IPC API封装
+import { useI18n } from '../../i18n'; // 国际化Hook
+import type { ImageStats, ImportResult, ViewType } from '../../types'; // 类型定义
 
+/**
+ * @component Sidebar
+ * @description 侧边栏组件 - 提供应用导航、图片统计、导入功能、模型列表和设置面板
+ */
 interface SidebarProps {
-  activeView: ViewType;
-  onNavigate: (view: ViewType) => void;
-  tags: TagRecord[];
-  stats: ImageStats | null;
-  onImport: () => void;
-  onImportFolder: () => void;
-  onAddTag: (name: string, color?: string) => void;
-  onRemoveTag: (tagId: number) => void;
-  selectedTag: string | null;
-  onSelectTag: (tagName: string | null) => void;
-  importResult: ImportResult | null;
+  activeView: ViewType; // 当前激活的视图
+  onNavigate: (view: ViewType) => void; // 视图切换回调
+  stats: ImageStats | null; // 图片统计数据
+  onImport: () => void; // 导入PNG回调
+  onImportFolder: () => void; // 导入文件夹回调
+  importResult: ImportResult | null; // 导入结果
+  importProgress: { done: number; total: number } | null; // 后台导入进度
 }
 
 export function Sidebar({
-  activeView,
-  onNavigate,
-  tags,
-  stats,
-  onImport,
-  onImportFolder,
-  onAddTag,
-  onRemoveTag,
-  selectedTag,
-  onSelectTag,
-  importResult,
+  activeView, onNavigate, stats, onImport, onImportFolder, importResult, importProgress,
 }: SidebarProps) {
-  const { t, locale, toggleLocale } = useI18n();
-  const [showTagInput, setShowTagInput] = useState(false);
-  const [newTagName, setNewTagName] = useState('');
-  const [showSettings, setShowSettings] = useState(false);
-  const [storageConfig, setStorageConfig] = useState<{ storage_dir: string | null; resolved_dir: string } | null>(null);
-  const [customDir, setCustomDir] = useState('');
+  const { t, locale, toggleLocale } = useI18n(); // t: 翻译函数, locale: 当前语言, toggleLocale: 切换语言
+  const [showSettings, setShowSettings] = useState(false); // 设置面板展开状态
+  const [storageConfig, setStorageConfig] = useState<{ storage_dir: string | null; resolved_dir: string } | null>(null); // 存储配置
+  const [customDir, setCustomDir] = useState(''); // 自定义目录输入
 
+  /**
+   * 加载存储配置
+   */
   useEffect(() => {
     api.getStorageConfig().then(cfg => {
       setStorageConfig(cfg);
@@ -47,6 +37,9 @@ export function Sidebar({
     }).catch(() => {});
   }, []);
 
+  /**
+   * 保存自定义存储目录
+   */
   const handleSaveStorageDir = async () => {
     try {
       const cfg = await api.setStorageDir(customDir.trim() || null);
@@ -56,176 +49,142 @@ export function Sidebar({
     }
   };
 
-  const handleAddTag = () => {
-    const name = newTagName.trim();
-    if (!name) return;
-    onAddTag(name);
-    setNewTagName('');
-    setShowTagInput(false);
-  };
-
   return (
-    <aside className="w-72 min-w-[288px] h-screen flex flex-col bg-neu-bg p-5 gap-5 overflow-y-auto">
-      {/* App Title */}
+    <aside className="w-64 min-w-[256px] h-screen flex flex-col bg-ink-bg border-r border-ink-line p-5 gap-6 overflow-y-auto">
+      {/* 应用标题 */}
       <div>
-        <h1 className="font-display font-extrabold text-2xl text-neu-text tracking-tight">
+        <h1 className="font-display text-display-md text-ink tracking-tight">
           {t.app.title}
         </h1>
         {stats && (
-          <div className="flex gap-4 mt-2 text-sm text-neu-muted">
+          <div className="flex gap-4 mt-1.5 text-caption text-ink-muted uppercase tracking-widest">
             <span>{stats.total_images} {t.gallery.images}</span>
-            <span>{stats.total_tags} {t.gallery.tags}</span>
           </div>
         )}
       </div>
 
-      {/* Import Buttons */}
+      {/* 导入按钮区域 */}
       <div className="flex flex-col gap-2">
-        <NeuButton variant="primary" onClick={onImport}>
+        <Button variant="primary" onClick={onImport}>
           {t.import.importPngs}
-        </NeuButton>
-        <NeuButton variant="secondary" size="sm" onClick={onImportFolder}>
+        </Button>
+        <Button variant="secondary" size="sm" onClick={onImportFolder}>
           {t.import.importFolder}
-        </NeuButton>
+        </Button>
+        {importProgress && (
+          <Card padding="sm" bordered className="mt-2">
+            <p className="text-xs text-ink-muted">
+              Importing {importProgress.total > 0 ? `${importProgress.done}/${importProgress.total}` : '...'}
+            </p>
+            {importProgress.total > 0 && (
+              <div className="mt-2 h-1 bg-ink-line rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-ink transition-all duration-200"
+                  style={{ width: `${Math.round((importProgress.done / importProgress.total) * 100)}%` }}
+                />
+              </div>
+            )}
+          </Card>
+        )}
+        {/* 导入结果提示 */}
         {importResult && (
-          <NeuCard padding="sm" className="!rounded-neu-sm mt-2">
-            <p className="text-xs text-neu-muted">
+          <Card padding="sm" bordered className="mt-2">
+            <p className="text-xs text-ink-muted">
               {t.import.success}: {importResult.success.length}, {t.import.skipped}: {importResult.skipped.length}, {t.import.errors}: {importResult.errors.length}
             </p>
-          </NeuCard>
+          </Card>
         )}
       </div>
 
-      {/* Navigation */}
-      <nav className="flex flex-col gap-2">
-        <NeuButton
-          variant={activeView === 'gallery' && !selectedTag ? 'primary' : 'secondary'}
-          size="sm"
-          onClick={() => { onNavigate('gallery'); onSelectTag(null); }}
-          className={activeView === 'gallery' && !selectedTag ? 'neu-inset-sm !bg-neu-accent/10 !text-neu-accent' : ''}
-        >
-          {t.nav.gallery}
-        </NeuButton>
-        <NeuButton
-          variant={activeView === 'favorites' ? 'primary' : 'secondary'}
-          size="sm"
-          onClick={() => onNavigate('favorites')}
-          className={activeView === 'favorites' ? 'neu-inset-sm !bg-neu-accent/10 !text-neu-accent' : ''}
-        >
-          {t.nav.favorites}
-        </NeuButton>
+      {/* 导航菜单 */}
+      <nav className="flex flex-col gap-1">
+        {(['gallery', 'favorites'] as const).map(v => (
+          <button
+            key={v}
+            onClick={() => onNavigate(v)}
+            className={`text-left px-3 py-2 text-sm rounded-btn transition-colors duration-150 ${
+              activeView === v
+                ? 'bg-ink text-white font-medium' // 当前激活样式
+                : 'text-ink-secondary hover:text-ink hover:bg-ink-surface'
+            }`}
+          >
+            {v === 'gallery' ? t.nav.gallery : t.nav.favorites}
+          </button>
+        ))}
       </nav>
 
-      {/* Tags Section */}
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h3 className="font-display font-semibold text-sm text-neu-text uppercase tracking-wider">{t.sidebar.tags}</h3>
-          <NeuButton
-            variant="icon"
-            size="sm"
-            onClick={() => setShowTagInput(!showTagInput)}
-          >
-            +
-          </NeuButton>
-        </div>
-
-        {showTagInput && (
-          <div className="flex gap-2">
-            <NeuInput
-              placeholder={t.sidebar.tagPlaceholder}
-              value={newTagName}
-              onChange={e => setNewTagName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleAddTag()}
-              className="!py-2 !text-sm"
-              autoFocus
-            />
-            <NeuButton size="sm" onClick={handleAddTag}>{t.sidebar.add}</NeuButton>
-          </div>
-        )}
-
-        <div className="flex flex-wrap gap-2">
-          <NeuTag
-            name={t.sidebar.all}
-            active={selectedTag === null}
-            onToggle={() => onSelectTag(null)}
-          />
-          {tags.map(tag => (
-            <NeuTag
-              key={tag.id}
-              name={tag.name}
-              color={tag.color}
-              active={selectedTag === tag.name}
-              count={tag.count}
-              onToggle={() => onSelectTag(selectedTag === tag.name ? null : tag.name)}
-              onRemove={() => onRemoveTag(tag.id)}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* Models Section */}
+      {/* 模型列表区域 */}
       {stats && stats.models.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <h3 className="font-display font-semibold text-sm text-neu-text uppercase tracking-wider">{t.sidebar.models}</h3>
-          <div className="flex flex-col gap-1.5">
-            {stats.models.map(m => (
-              <div key={m.model} className="flex items-center justify-between px-3 py-1.5 rounded-neu-sm text-sm">
-                <span className="text-neu-muted truncate mr-2" title={m.model}>
-                  {truncate(m.model, 22)}
-                </span>
-                <span className="text-xs text-neu-muted opacity-60 flex-shrink-0">{m.count}</span>
-              </div>
-            ))}
+        <>
+          <div className="divider-h" />
+          <div className="flex flex-col gap-2">
+            <h3 className="text-caption text-ink-muted uppercase tracking-widest">{t.sidebar.models}</h3>
+            <div className="flex flex-col gap-1">
+              {stats.models.map(m => (
+                <div key={m.model} className="flex items-center justify-between px-2 py-1.5 text-sm">
+                  <span className="text-ink-secondary truncate mr-2" title={m.model}>
+                    {truncate(m.model, 22)} {/* 截断过长模型名 */}
+                  </span>
+                  <span className="text-[10px] text-ink-faint tabular-nums">{m.count}</span>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        </>
       )}
 
-      {/* Spacer */}
-      <div className="flex-1" />
+      <div className="flex-1" /> {/* 弹性空间，将设置推到底部 */}
 
-      {/* Language Toggle */}
-      <NeuButton variant="secondary" size="sm" onClick={toggleLocale}>
-        {locale === 'en' ? '中文' : 'English'}
-      </NeuButton>
-
-      {/* Settings Section */}
+      {/* 设置区域 */}
       <div className="flex flex-col gap-2">
         <button
-          className="flex items-center justify-between text-sm text-neu-muted hover:text-neu-text transition-colors"
+          className="flex items-center justify-between text-caption text-ink-muted hover:text-ink transition-colors uppercase tracking-widest"
           onClick={() => setShowSettings(!showSettings)}
         >
-          <span className="font-display font-semibold uppercase tracking-wider">{t.nav.settings}</span>
+          <span>{t.nav.settings}</span>
           <svg
-            width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-            className={`transition-transform duration-300 ${showSettings ? 'rotate-180' : ''}`}
+            width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+            className={`transition-transform duration-200 ${showSettings ? 'rotate-180' : ''}`}
           >
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </button>
 
         {showSettings && storageConfig && (
-          <NeuCard padding="sm" className="!rounded-neu-sm space-y-3">
+          <Card padding="sm" bordered className="space-y-3">
+            {/* 语言切换 */}
             <div>
-              <label className="text-[10px] text-neu-muted uppercase tracking-wider">{t.sidebar.storagePath}</label>
-              <p className="text-xs text-neu-text mt-1 break-all" title={storageConfig.resolved_dir}>
+              <label className="text-[10px] text-ink-muted uppercase tracking-widest">Language</label>
+              <button
+                onClick={toggleLocale}
+                className="mt-1 w-full px-3 py-2 text-left text-xs rounded-btn border border-ink-line text-ink-secondary hover:text-ink hover:border-ink-muted transition-colors"
+              >
+                {locale === 'en' ? '中文' : 'English'}
+              </button>
+            </div>
+            {/* 当前存储路径 */}
+            <div>
+              <label className="text-[10px] text-ink-muted uppercase tracking-widest">{t.sidebar.storagePath}</label>
+              <p className="text-xs text-ink-secondary mt-1 break-all" title={storageConfig.resolved_dir}>
                 {storageConfig.resolved_dir}
               </p>
             </div>
+            {/* 自定义存储目录 */}
             <div>
-              <label className="text-[10px] text-neu-muted uppercase tracking-wider">{t.sidebar.customDir}</label>
+              <label className="text-[10px] text-ink-muted uppercase tracking-widest">{t.sidebar.customDir}</label>
               <div className="flex gap-1 mt-1">
-                <NeuInput
+                <Input
                   placeholder={t.sidebar.customDirPlaceholder}
                   value={customDir}
                   onChange={e => setCustomDir(e.target.value)}
-                  className="!py-1.5 !text-xs flex-1"
+                  className="!py-1 !text-xs flex-1"
                 />
-                <NeuButton size="sm" variant="secondary" onClick={handleSaveStorageDir}>
+                <Button size="sm" variant="secondary" onClick={handleSaveStorageDir}>
                   {t.sidebar.saveStorage}
-                </NeuButton>
+                </Button>
               </div>
             </div>
-          </NeuCard>
+          </Card>
         )}
       </div>
     </aside>

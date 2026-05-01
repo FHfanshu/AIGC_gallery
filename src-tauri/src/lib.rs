@@ -1,23 +1,35 @@
+// 应用库入口：模块声明、全局状态定义、Tauri 应用构建
 mod commands;
 mod config;
 mod db;
 mod metadata;
 mod utils;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+/// 全局应用状态，持有数据库的线程安全引用
 pub struct AppState {
-    pub db: Mutex<db::Database>,
+    pub db: Arc<Mutex<db::Database>>,
 }
 
+/// 初始化数据库、注册插件和命令，启动 Tauri 应用
 pub fn run() {
     let db = db::Database::new().expect("Failed to initialize database");
 
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+                ])
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(AppState {
-            db: Mutex::new(db),
+            db: Arc::new(Mutex::new(db)),
         })
         .invoke_handler(tauri::generate_handler![
             commands::import_images,
@@ -37,6 +49,8 @@ pub fn run() {
             commands::get_storage_config,
             commands::set_storage_dir,
             commands::get_image_base64,
+            commands::start_import_images,
+            commands::start_import_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

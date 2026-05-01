@@ -1,3 +1,7 @@
+/**
+ * 图片卡片组件
+ * 展示单张图片的缩略图、来源标签和收藏按钮，支持懒加载缩略图
+ */
 import { memo, useState, useEffect } from 'react';
 import { cn, truncate, getSourceLabel } from '../../lib/utils';
 import { api } from '../../lib/tauri';
@@ -10,11 +14,13 @@ interface ImageCardProps {
   onToggleFavorite: (imageId: number) => void;
 }
 
+/** 图片卡片：展示图片缩略图、来源标识、收藏心，memo 优化避免不必要的重渲染 */
 export const ImageCard = memo(function ImageCard({ image, selected, onClick, onToggleFavorite }: ImageCardProps) {
   const [imgSrc, setImgSrc] = useState<string>('');
   const [loaded, setLoaded] = useState(false);
-  const source = getSourceLabel(image.source_type);
+  const source = getSourceLabel(image.source_type); // 获取来源配置（颜色/标签）
 
+  // 异步加载图片 base64 数据，组件卸载或依赖变化时取消请求
   useEffect(() => {
     let cancelled = false;
     setLoaded(false);
@@ -27,10 +33,8 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
         }
       })
       .catch(() => {
-        // Fallback: try convertFileSrc on stored_path or file_path
         if (!cancelled) {
-          const fallback = image.stored_path || image.file_path;
-          setImgSrc(fallback ? `https://asset.localhost/${fallback.replace(/\\/g, '/')}` : '');
+          setImgSrc('');
           setLoaded(true);
         }
       });
@@ -41,55 +45,56 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
   return (
     <div
       className={cn(
-        'rounded-neu-card bg-neu-bg transition-all duration-300 ease-out cursor-pointer overflow-hidden group',
+        'rounded-card bg-ink-bg transition-all duration-150 cursor-pointer overflow-hidden group border',
         selected
-          ? 'neu-inset ring-2 ring-neu-accent'
-          : 'neu-raised hover:-translate-y-[2px] hover:neu-raised-hover'
+          ? 'border-ink ring-1 ring-ink'
+          : 'border-ink-line hover:border-ink-muted'
       )}
       onClick={onClick}
     >
-      {/* Image */}
-      <div className="relative aspect-square overflow-hidden rounded-t-neu-card">
+      {/* 图片区域 */}
+      <div className="relative aspect-square overflow-hidden bg-ink-surface">
         {!loaded ? (
-          <div className="w-full h-full bg-neu-bg neu-inset animate-pulse" />
+          // 加载中骨架屏
+          <div className="w-full h-full bg-ink-surface animate-pulse" />
         ) : imgSrc ? (
           <img
             src={imgSrc}
             alt={image.file_name}
-            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+            className="w-full h-full object-cover object-top transition-transform duration-500 group-hover:scale-[1.02]"
             onError={e => {
-              (e.target as HTMLImageElement).style.display = 'none';
+              (e.target as HTMLImageElement).style.display = 'none'; // 加载失败时隐藏
             }}
           />
         ) : null}
 
-        {/* Source badge */}
+        {/* 来源标签（如 SD、MJ 等） */}
         <span
-          className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-[10px] font-semibold text-white backdrop-blur-sm"
-          style={{ backgroundColor: source.color + 'CC' }}
+          className="absolute top-2 left-2 px-2 py-0.5 rounded-pill text-[9px] font-semibold text-white uppercase tracking-wider backdrop-blur-sm"
+          style={{ backgroundColor: source.color + 'DD' }}
         >
           {source.label}
         </span>
 
-        {/* Favorite heart */}
+        {/* 收藏按钮：hover 显示，已收藏时始终显示 */}
         <button
           onClick={(e) => {
-            e.stopPropagation();
+            e.stopPropagation(); // 阻止冒泡触发卡片点击
             onToggleFavorite(image.id);
           }}
           className={cn(
-            'absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center transition-all duration-300',
-            'bg-white/80 backdrop-blur-sm hover:bg-white',
+            'absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200',
+            'bg-white/90 backdrop-blur-sm hover:bg-white',
             'opacity-0 group-hover:opacity-100',
             image.is_favorite && '!opacity-100'
           )}
         >
           <svg
-            width="16"
-            height="16"
+            width="14"
+            height="14"
             viewBox="0 0 24 24"
-            fill={image.is_favorite ? '#E53E3E' : 'none'}
-            stroke={image.is_favorite ? '#E53E3E' : '#6B7280'}
+            fill={image.is_favorite ? '#DC2626' : 'none'}
+            stroke={image.is_favorite ? '#DC2626' : '#8A8A8A'}
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -99,28 +104,11 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
         </button>
       </div>
 
-      {/* Info */}
-      <div className="p-3">
-        <p className="text-xs text-neu-muted truncate" title={image.file_name}>
+      {/* 文件名信息 */}
+      <div className="px-3 py-2.5 border-t border-ink-line">
+        <p className="text-xs text-ink-secondary truncate" title={image.file_name}>
           {image.file_name}
         </p>
-        {image.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-1.5">
-            {image.tags.slice(0, 3).map(t => (
-              <span
-                key={t}
-                className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-neu-bg neu-inset-sm text-neu-muted"
-              >
-                {t}
-              </span>
-            ))}
-            {image.tags.length > 3 && (
-              <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-neu-bg neu-inset-sm text-neu-muted">
-                +{image.tags.length - 3}
-              </span>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

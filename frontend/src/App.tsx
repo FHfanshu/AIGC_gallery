@@ -1,47 +1,85 @@
+// 应用根组件
+// 负责视图路由（画廊/收藏）、图片导入、拖拽上传、事件编排
+// 组合 Sidebar + Header + GalleryGrid + ImageDetail 四大布局区域
+
 import { useState, useCallback, useEffect } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { listen } from '@tauri-apps/api/event';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { GalleryGrid } from './components/gallery/GalleryGrid';
 import { ImageDetail } from './components/gallery/ImageDetail';
-import { useGallery, useTags, useFavorites, useStats } from './hooks';
+import { useGallery, useFavorites, useStats, useNSFWFilter } from './hooks';
 import { api } from './lib/tauri';
 import type { ImageRecord, ImportResult, ViewType } from './types';
 
 function App() {
+  // 当前视图：gallery（画廊）/ favorites（收藏）
   const [view, setView] = useState<ViewType>('gallery');
+  // 当前选中查看详情的图片
   const [selectedImage, setSelectedImage] = useState<ImageRecord | null>(null);
+  // 导入结果提示（成功/跳过/错误数量）
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  // 导入进度：后端通过事件推送 { done, total }
+  const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
+  // 拖拽文件悬停状态（用于显示全屏遮罩）
   const [isDraggingOver, setIsDraggingOver] = useState(false);
 
+  const nsfw = useNSFWFilter();
   const gallery = useGallery();
-  const tags = useTags();
   const favorites = useFavorites();
   const stats = useStats();
 
-  // Tauri native drag-and-drop: listen for OS file drops anywhere on the window
+  // 监听后端推送的导入进度和完成事件
   useEffect(() => {
-    const unlisten = getCurrentWindow().onDragDropEvent((event) => {
-      if (event.payload.type === 'over') {
-        setIsDraggingOver(true);
-      } else if (event.payload.type === 'drop') {
-        setIsDraggingOver(false);
-        const pngPaths = (event.payload.paths as string[]).filter(
-          (p: string) => p.toLowerCase().endsWith('.png')
-        );
-        if (pngPaths.length > 0) {
-          handleDropFiles(pngPaths);
-        }
-      } else {
-        // cancelled
-        setIsDraggingOver(false);
+    const unlisteners: Array<() => void> = [];
+    // 导入进度更新：显示已完成/总数
+    listen<{ done: number; total: number }>('import-progress', event => {
+      setImportProgress({ done: event.payload.done, total: event.payload.total });
+    }).then(unlisten => unlisteners.push(unlisten));
+    // 导入完成：清除进度，显示结果，5 秒后自动关闭
+    listen<ImportResult>('import-finished', event => {
+      setImportProgress(null);
+      setImportResult(event.payload);
+      setTimeout(() => setImportResult(null), 5000);
+      if (event.payload.success.length > 0) {
+        // 有新图片导入成功，刷新列表和统计
+        gallery.loadImages(true);
+        stats.loadStats();
       }
-    });
-    return () => { unlisten.then(fn => fn()); };
+    }).then(unlisten => unlisteners.push(unlisten));
+
+    return () => { unlisteners.forEach(unlisten => unlisten()); };
+  }, [gallery, stats]);
+
+  // 监听操作系统级别的文件拖拽事件（Tauri 原生拖放）
+  useEffect(() => {
+    let cleanup: (() => void) | undefined;
+    try {
+      getCurrentWindow().onDragDropEvent((event) => {
+        if (event.payload.type === 'over') {
+          setIsDraggingOver(true);
+        } else if (event.payload.type === 'drop') {
+          setIsDraggingOver(false);
+          // 仅过滤 PNG 文件
+          const pngPaths = (event.payload.paths as string[]).filter(
+            (p: string) => p.toLowerCase().endsWith('.png')
+          );
+          if (pngPaths.length > 0) {
+            handleDropFiles(pngPaths);
+          }
+        } else {
+          setIsDraggingOver(false);
+        }
+      }).then(fn => { cleanup = fn; });
+    } catch {
+      // 非 Tauri 环境（如浏览器开发）忽略
+    }
+    return () => { cleanup?.(); };
   }, []);
 
-  // Import handlers
+  // 通过文件对话框选择 PNG 文件导入
   const handleImport = useCallback(async () => {
     try {
       const files = await open({
@@ -50,72 +88,54 @@ function App() {
       });
       if (!files) return;
       const filePaths = Array.isArray(files) ? files : [files];
-      const result = await api.importImages(filePaths);
-      setImportResult(result);
-      setTimeout(() => setImportResult(null), 5000);
-      if (result.success.length > 0) {
-        gallery.loadImages(true);
-        tags.loadTags();
-        stats.loadStats();
-      }
+      // 启动后端异步导入，进度通过事件推送
+      await api.startImportImages(filePaths);
+      setImportProgress({ done: 0, total: filePaths.length });
     } catch (e) {
       console.error('Import failed:', e);
     }
-  }, [gallery, tags, stats]);
+  }, [gallery, stats]);
 
+  // 选择文件夹批量导入
   const handleImportFolder = useCallback(async () => {
     try {
       const folder = await open({ directory: true });
       if (!folder) return;
-      const result = await api.importFolder(folder as string);
-      setImportResult(result);
-      setTimeout(() => setImportResult(null), 5000);
-      if (result.success.length > 0) {
-        gallery.loadImages(true);
-        tags.loadTags();
-        stats.loadStats();
-      }
+      await api.startImportFolder(folder as string);
+      setImportProgress({ done: 0, total: 0 });
     } catch (e) {
       console.error('Folder import failed:', e);
     }
-  }, [gallery, tags, stats]);
+  }, [gallery, stats]);
 
+  // 处理拖拽文件导入
   const handleDropFiles = useCallback(async (files: string[]) => {
     try {
-      const result = await api.importImages(files);
-      setImportResult(result);
-      setTimeout(() => setImportResult(null), 5000);
-      if (result.success.length > 0) {
-        gallery.loadImages(true);
-        tags.loadTags();
-        stats.loadStats();
-      }
+      await api.startImportImages(files);
+      setImportProgress({ done: 0, total: files.length });
     } catch (e) {
       console.error('Drop import failed:', e);
     }
-  }, [gallery, tags, stats]);
+  }, [gallery, stats]);
 
-  // Delete handler
+  // 删除图片：关闭详情面板，刷新统计
   const handleDelete = useCallback(async (id: number) => {
     try {
       await gallery.deleteImage(id);
       setSelectedImage(null);
       stats.loadStats();
-      tags.loadTags();
     } catch (e) {
       console.error('Delete failed:', e);
     }
-  }, [gallery, stats, tags]);
+  }, [gallery, stats]);
 
-  // Favorite handler
+  // 切换收藏状态：同步更新列表和详情中的状态
   const handleToggleFavorite = useCallback(async (imageId: number) => {
     try {
       const newState = await favorites.toggleFavorite(imageId);
-      // Update image in gallery list
       gallery.setImages(prev =>
         prev.map(img => img.id === imageId ? { ...img, is_favorite: newState } : img)
       );
-      // Update selected image if it's the one toggled
       if (selectedImage?.id === imageId) {
         setSelectedImage(prev => prev ? { ...prev, is_favorite: newState } : null);
       }
@@ -124,38 +144,7 @@ function App() {
     }
   }, [favorites, gallery, selectedImage]);
 
-  // Tag handlers
-  const handleUpdateTags = useCallback(async (imageId: number, tagName: string) => {
-    const image = gallery.images.find(i => i.id === imageId) || (selectedImage?.id === imageId ? selectedImage : null);
-    if (!image) return;
-
-    const tag = tags.tags.find(t => t.name === tagName);
-    if (!tag) return;
-
-    const currentTagIds = tags.tags
-      .filter(t => image.tags.includes(t.name))
-      .map(t => t.id);
-
-    let newTagIds: number[];
-    if (image.tags.includes(tagName)) {
-      newTagIds = currentTagIds.filter(id => id !== tag.id);
-    } else {
-      newTagIds = [...currentTagIds, tag.id];
-    }
-
-    try {
-      await api.updateImageTags(imageId, newTagIds);
-      gallery.loadImages(true);
-      tags.loadTags();
-      if (selectedImage?.id === imageId) {
-        const updated = await api.getImageDetail(imageId);
-        setSelectedImage(updated);
-      }
-    } catch (e) {
-      console.error('Toggle tag failed:', e);
-    }
-  }, [gallery, tags, selectedImage]);
-
+  // 更新提示词：保存后刷新列表和详情
   const handleUpdatePrompt = useCallback(async (imageId: number, positive: string, negative: string) => {
     try {
       await api.updatePrompt(imageId, positive, negative);
@@ -169,7 +158,7 @@ function App() {
     }
   }, [gallery, selectedImage]);
 
-  // Navigation
+  // 视图导航切换
   const handleNavigate = useCallback((newView: ViewType) => {
     setView(newView);
     if (newView === 'favorites') {
@@ -178,33 +167,35 @@ function App() {
     setSelectedImage(null);
   }, [favorites]);
 
-  // Determine current image list based on view
-  const currentImages = view === 'favorites' ? favorites.favorites : gallery.images;
+  // 根据当前视图选择数据源：收藏页用 favorites，画廊页用 gallery
+  const rawImages = view === 'favorites' ? favorites.favorites : gallery.images;
+  const currentImages = nsfw.filterImages(rawImages); // 应用 NSFW 过滤
   const currentLoading = view === 'favorites' ? favorites.loading : gallery.loading;
 
   return (
-    <div className="flex h-screen bg-neu-bg overflow-hidden">
+    <div className="flex h-screen bg-ink-bg overflow-hidden">
+      {/* 左侧导航栏：视图切换、存储配置、统计信息 */}
       <Sidebar
         activeView={view}
         onNavigate={handleNavigate}
-        tags={tags.tags}
         stats={stats.stats}
         onImport={handleImport}
         onImportFolder={handleImportFolder}
-        onAddTag={tags.addTag}
-        onRemoveTag={tags.removeTag}
-        selectedTag={gallery.selectedTag}
-        onSelectTag={gallery.setSelectedTag}
         importResult={importResult}
+        importProgress={importProgress}
       />
 
+      {/* 主内容区：搜索栏 + 图片网格 */}
       <main className="flex-1 flex flex-col overflow-hidden">
         <Header
           searchQuery={gallery.searchQuery}
           setSearchQuery={gallery.setSearchQuery}
-          selectedTag={gallery.selectedTag}
-          clearTag={() => gallery.setSelectedTag(null)}
           imageCount={currentImages.length}
+          hideNSFW={nsfw.hideNSFW}
+          onToggleNSFW={nsfw.toggleNSFW}
+          nsfwTags={[...nsfw.nsfwTags]}
+          onAddNSFWTag={nsfw.addNSFWTag}
+          onRemoveNSFWTag={nsfw.removeNSFWTag}
         />
 
         <GalleryGrid
@@ -218,26 +209,25 @@ function App() {
         />
       </main>
 
+      {/* 右侧图片详情面板：元数据、提示词编辑、操作按钮 */}
       {selectedImage && (
         <ImageDetail
           image={selectedImage}
-          tags={tags.tags}
           onClose={() => setSelectedImage(null)}
           onDelete={handleDelete}
           onToggleFavorite={handleToggleFavorite}
-          onUpdateTags={handleUpdateTags}
           onUpdatePrompt={handleUpdatePrompt}
         />
       )}
 
-      {/* Global drag overlay for OS-level file drops */}
+      {/* 全屏拖拽遮罩：文件悬停时显示 */}
       {isDraggingOver && (
-        <div className="fixed inset-0 z-[100] bg-neu-accent/10 backdrop-blur-sm flex items-center justify-center pointer-events-none">
-          <div className="neu-inset-deep rounded-[32px] px-12 py-8 border-2 border-dashed border-neu-accent/40">
-            <p className="font-display font-bold text-2xl text-neu-accent text-center">
+        <div className="fixed inset-0 z-[100] bg-ink-bg/80 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+          <div className="rounded-card border-2 border-dashed border-ink-muted px-12 py-8 bg-ink-bg">
+            <p className="font-display font-bold text-xl text-ink text-center">
               Drop PNG files here
             </p>
-            <p className="text-sm text-neu-muted text-center mt-2">
+            <p className="text-sm text-ink-muted text-center mt-2">
               Images will be imported with metadata auto-detected
             </p>
           </div>

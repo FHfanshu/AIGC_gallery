@@ -1,37 +1,38 @@
+/**
+ * 全局样式入口
+ * 引入 Google Fonts、Tailwind 基础层及自定义组件层样式
+ */
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* 基础层：全局 body 样式与边框颜色重置 */
 @layer base {
   body {
-    @apply bg-neu-bg text-neu-text font-body m-0 p-0 antialiased;
-    scroll-behavior: smooth;
+    @apply bg-ink-bg text-ink font-body m-0 p-0 antialiased;
+    scroll-behavior: smooth; /* 平滑滚动 */
+  }
+
+  * {
+    @apply border-ink-line; /* 全局默认边框色 */
   }
 }
 
+/* 组件层：自定义工具类 */
 @layer components {
-  /* Neumorphic shadow utilities */
-  .neu-raised {
-    box-shadow: 9px 9px 16px rgb(163,177,198,0.6), -9px -9px 16px rgba(255,255,255,0.5);
+  /* 细水平分割线 */
+  .divider-h {
+    @apply border-t border-ink-line;
   }
-  .neu-raised-hover {
-    box-shadow: 12px 12px 20px rgb(163,177,198,0.7), -12px -12px 20px rgba(255,255,255,0.6);
+  /* 细垂直分割线 */
+  .divider-v {
+    @apply border-l border-ink-line;
   }
-  .neu-raised-sm {
-    box-shadow: 5px 5px 10px rgb(163,177,198,0.6), -5px -5px 10px rgba(255,255,255,0.5);
-  }
-  .neu-inset {
-    box-shadow: inset 6px 6px 10px rgb(163,177,198,0.6), inset -6px -6px 10px rgba(255,255,255,0.5);
-  }
-  .neu-inset-deep {
-    box-shadow: inset 10px 10px 20px rgb(163,177,198,0.7), inset -10px -10px 20px rgba(255,255,255,0.6);
-  }
-  .neu-inset-sm {
-    box-shadow: inset 3px 3px 6px rgb(163,177,198,0.6), inset -3px -3px 6px rgba(255,255,255,0.5);
-  }
-  .neu-flat {
-    box-shadow: none;
+
+  /* 焦点环 -- 极简风格，ink 色系 */
+  .focus-ring {
+    @apply focus:outline-none focus:ring-1 focus:ring-ink/20 focus:ring-offset-1 focus:ring-offset-ink-bg;
   }
 }
