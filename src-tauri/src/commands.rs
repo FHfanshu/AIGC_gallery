@@ -801,7 +801,8 @@ pub fn import_gallery(app: AppHandle, zip_path: String) -> Result<String, String
     // 重新初始化数据库连接，使导入的数据立即可用
     match crate::db::Database::new() {
         Ok(new_db) => {
-            let mut db_lock = app.state::<AppState>().db.lock().map_err(|e: String| e.to_string())?;
+            let state = app.state::<AppState>();
+            let mut db_lock = state.db.lock().map_err(|e| e.to_string())?;
             *db_lock = new_db;
         }
         Err(e) => return Err(format!("导入文件已恢复，但重新加载数据库失败: {}", e)),
