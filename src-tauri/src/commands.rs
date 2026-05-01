@@ -544,6 +544,8 @@ pub fn lookup_civitai_by_hash(hash: String) -> Result<Option<CivitaiLookupResult
     let url = format!("{}/api/v1/model-versions/by-hash/{}", base_url, clean_hash);
     let client = reqwest::blocking::Client::builder()
         .user_agent("AIGC Gallery/0.1.0")
+        .timeout(Duration::from_secs(12))
+        .connect_timeout(Duration::from_secs(5))
         .build()
         .map_err(|e| e.to_string())?;
     let mut req = client.get(url).header("Accept", "application/json");
@@ -811,7 +813,12 @@ pub fn import_gallery(app: AppHandle, zip_path: String) -> Result<String, String
             continue;
         }
 
-        let name_str = entry_name.to_string_lossy().to_string();
+        let name_str = entry_name.to_string_lossy().replace('\\', "/");
+
+        if entry.is_dir() {
+            skipped += 1;
+            continue;
+        }
 
         // gallery.db — 备份旧 DB 后替换
         if name_str == "gallery.db" {
@@ -832,7 +839,11 @@ pub fn import_gallery(app: AppHandle, zip_path: String) -> Result<String, String
             continue;
         }
 
-        // images/ 或 thumbnails/ 下的文件
+        // images/ 或 thumbnails/ 下的文件；拒绝写入图库根目录下的其他任意路径。
+        if !(name_str.starts_with("images/") || name_str.starts_with("thumbnails/")) {
+            skipped += 1;
+            continue;
+        }
         let dest = root.join(&name_str);
         if dest.exists() {
             skipped += 1;

@@ -100,13 +100,26 @@ export function ImageDetail({
     }
   };
 
-  // 预览层打开时锁住底层页面滚动，避免滚轮缩放同时滚动 gallery / 详情面板。
+  // 预览层打开时锁住底层页面滚动，并注册全局兜底事件。
   useEffect(() => {
     if (!isPreviewOpen) return;
     const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsPreviewOpen(false);
+    };
+    const handlePointerEnd = () => {
+      dragRef.current.active = false;
+    };
+
     document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('pointerup', handlePointerEnd);
+    window.addEventListener('pointercancel', handlePointerEnd);
     return () => {
       document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('pointerup', handlePointerEnd);
+      window.removeEventListener('pointercancel', handlePointerEnd);
     };
   }, [isPreviewOpen]);
 
