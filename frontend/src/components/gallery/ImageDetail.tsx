@@ -150,7 +150,7 @@ export function ImageDetail({
   ].filter(Boolean) as [string, string][];
 
   return (
-    <aside className="w-[400px] min-w-[400px] h-screen flex flex-col bg-ink-bg border-l border-ink-line overflow-y-auto motion-fade-in">
+    <aside className="w-[400px] min-w-[400px] h-screen flex flex-col bg-ink-bg border-l border-ink-line overflow-y-auto motion-detail-panel-in">
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-ink-line">
         <h3 className="font-display font-bold text-sm text-ink uppercase tracking-wider">{t.detail.imageDetail}</h3>
@@ -178,7 +178,7 @@ export function ImageDetail({
           <img
             src={imgSrc}
             alt={image.file_name}
-            className="w-full h-auto motion-media-in"
+            className="w-full h-auto"
           />
         </button>
       </div>

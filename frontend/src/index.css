@@ -36,19 +36,26 @@
     @apply focus:outline-none focus:ring-1 focus:ring-ink/20 focus:ring-offset-1 focus:ring-offset-ink-bg;
   }
 
-  /* 仅改变透明度/滤镜/背景位置，不参与布局计算，避免破坏虚拟网格定位 */
+  /* 轻量淡入：用于小型浮层，不参与布局计算 */
   .motion-fade-in {
-    animation: motion-fade-in 220ms ease-out both;
+    animation: motion-fade-in 180ms ease-out both;
   }
 
+  /* 缩略图加载保持非常克制，避免抢过详情页动效的视觉焦点 */
   .motion-media-in {
-    animation: motion-media-in 260ms ease-out both;
+    animation: motion-media-in 160ms ease-out both;
   }
 
   .motion-shimmer {
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
-    background-size: 220% 100%;
-    animation: motion-shimmer 1.4s ease-in-out infinite;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent);
+    background-size: 240% 100%;
+    animation: motion-shimmer 2.2s ease-in-out infinite;
+  }
+
+  /* 详情页主动效：只在自身图层上做 transform，不影响主网格布局计算 */
+  .motion-detail-panel-in {
+    animation: motion-detail-panel-in 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    will-change: transform, opacity;
   }
 }
 
@@ -58,11 +65,16 @@
 }
 
 @keyframes motion-media-in {
-  from { opacity: 0; filter: blur(6px); }
-  to { opacity: 1; filter: blur(0); }
+  from { opacity: 0.72; }
+  to { opacity: 1; }
 }
 
 @keyframes motion-shimmer {
   from { background-position: 120% 0; }
   to { background-position: -120% 0; }
+}
+
+@keyframes motion-detail-panel-in {
+  from { opacity: 0; transform: translate3d(28px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
