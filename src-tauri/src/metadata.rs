@@ -261,9 +261,60 @@ fn parse_comfyui_prompt(prompt: Option<&String>, meta: &mut ImageMetadata) {
     let Ok(workflow) = serde_json::from_str::<serde_json::Value>(prompt) else { return; };
     let Some(nodes) = workflow.as_object() else { return; };
 
+    let mut positive_ref: Option<String> = None;
+    let mut negative_ref: Option<String> = None;
+
     for node in nodes.values() {
-        parse_comfyui_node(node, meta);
+        let Some(class_type) = node.get("class_type").and_then(|v| v.as_str()) else { continue; };
+        let Some(inputs) = node.get("inputs") else { continue; };
+
+        match class_type {
+            "KSampler" | "KSamplerAdvanced" => {
+                parse_comfyui_sampler(inputs, meta);
+                if positive_ref.is_none() {
+                    positive_ref = parse_comfyui_node_ref(inputs.get("positive")).map(str::to_string);
+                }
+                if negative_ref.is_none() {
+                    negative_ref = parse_comfyui_node_ref(inputs.get("negative")).map(str::to_string);
+                }
+            }
+            "CheckpointLoaderSimple" | "UNETLoader" => parse_comfyui_model(inputs, meta),
+            _ => {}
+        }
     }
+
+    if let Some(node_id) = positive_ref.as_deref().and_then(|id| parse_comfyui_clip_text_by_id(nodes, id)) {
+        meta.prompt = node_id.to_string();
+    }
+    if let Some(node_id) = negative_ref.as_deref().and_then(|id| parse_comfyui_clip_text_by_id(nodes, id)) {
+        meta.negative_prompt = node_id.to_string();
+    }
+
+    // 完全没有 KSampler 引用时再回退到旧逻辑：按 CLIPTextEncode 出现顺序猜测正负向。
+    // 一旦存在 KSampler 引用，就不要再按顺序猜，避免把正向 prompt 再误填到反向里。
+    if positive_ref.is_none() && negative_ref.is_none() {
+        for node in nodes.values() {
+            parse_comfyui_node(node, meta);
+        }
+    }
+}
+
+/// 提取 ComfyUI 节点引用数组中的节点 ID，如 ["12", 0]。
+fn parse_comfyui_node_ref(value: Option<&serde_json::Value>) -> Option<&str> {
+    value?.as_array()?.first()?.as_str()
+}
+
+/// 根据节点 ID 提取对应 CLIPTextEncode 的文本内容。
+fn parse_comfyui_clip_text_by_id<'a>(
+    nodes: &'a serde_json::Map<String, serde_json::Value>,
+    node_id: &str,
+) -> Option<&'a str> {
+    let node = nodes.get(node_id)?;
+    let class_type = node.get("class_type").and_then(|v| v.as_str())?;
+    if class_type != "CLIPTextEncode" {
+        return None;
+    }
+    node.get("inputs")?.get("text")?.as_str()
 }
 
 /// 解析单个 ComfyUI 节点。

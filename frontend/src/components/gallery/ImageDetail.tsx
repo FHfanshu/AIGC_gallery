@@ -34,7 +34,6 @@ export function ImageDetail({
   const [civitaiResults, setCivitaiResults] = useState<Record<string, CivitaiLookupResult | null>>({});
   const [civitaiLoadingHash, setCivitaiLoadingHash] = useState<string | null>(null);
   const [civitaiError, setCivitaiError] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false); // 删除确认状态
   const dragRef = useRef({ active: false, x: 0, y: 0, startX: 0, startY: 0 });
 
   const meta: ImageMetadata | null = parseMetadata(image.metadata_json); // 解析元数据 JSON
@@ -60,7 +59,6 @@ export function ImageDetail({
     setEditPrompt(image.prompt || meta?.prompt || '');
     setEditNegPrompt(image.negative_prompt || meta?.negative_prompt || '');
     setCopiedField(null);
-    setConfirmDelete(false);
   }, [image.id]);
 
   /** 复制文本到剪贴板，失败时降级使用 execCommand */
@@ -453,16 +451,12 @@ export function ImageDetail({
           variant="danger"
           size="sm"
           onClick={() => {
-            if (confirmDelete) {
+            if (window.confirm(t.detail.confirmDelete)) {
               onDelete(image.id);
-            } else {
-              setConfirmDelete(true);
-              setTimeout(() => setConfirmDelete(false), 3000); // 3秒后自动取消确认
             }
           }}
-          className={confirmDelete ? 'animate-pulse' : ''}
         >
-          {confirmDelete ? t.detail.confirmDelete : t.detail.delete}
+          {t.detail.delete}
         </Button>
       </div>
 
