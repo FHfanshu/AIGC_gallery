@@ -78,12 +78,14 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
       <div className="relative aspect-square overflow-hidden bg-ink-surface">
         {!loaded ? (
           // 加载中骨架屏
-          <div className="w-full h-full bg-ink-surface animate-pulse" />
+          <div className="w-full h-full bg-ink-surface animate-pulse relative overflow-hidden">
+            <div className="absolute inset-0 motion-shimmer" />
+          </div>
         ) : imgSrc ? (
           <img
             src={imgSrc}
             alt={image.file_name}
-            className="w-full h-full object-cover object-top transition-transform duration-500 group-hover:scale-[1.02]"
+            className="w-full h-full object-cover object-top motion-media-in transition-transform duration-500 group-hover:scale-[1.02]"
             onError={e => {
               (e.target as HTMLImageElement).style.display = 'none'; // 加载失败时隐藏
             }}
@@ -107,8 +109,8 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
               onToggleFavorite(image.id);
             }}
             className={cn(
-              'w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200',
-              'bg-white/90 backdrop-blur-sm hover:bg-white',
+              'w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200 ease-out active:brightness-90',
+              'bg-white/90 backdrop-blur-sm hover:bg-white hover:shadow-sm',
               image.is_favorite && '!opacity-100'
             )}
           >
@@ -133,7 +135,7 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
                 onHideImage(image.id);
               }}
               title="标记为 NSFW 并隐藏"
-              className="w-7 h-7 rounded-full flex items-center justify-center bg-white/90 backdrop-blur-sm hover:bg-red-50 transition-all duration-200"
+              className="w-7 h-7 rounded-full flex items-center justify-center bg-white/90 backdrop-blur-sm hover:bg-red-50 hover:shadow-sm active:brightness-90 transition-all duration-200 ease-out"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A8A8A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />

@@ -178,7 +178,7 @@ export function Sidebar({
         </button>
 
         {showSettings && storageConfig && (
-          <Card padding="sm" bordered className="space-y-3">
+          <Card padding="sm" bordered className="space-y-3 motion-fade-in">
             {/* 语言切换 */}
             <div>
               <label className="text-xs font-medium text-ink-secondary uppercase tracking-widest">{t.sidebar.language}</label>

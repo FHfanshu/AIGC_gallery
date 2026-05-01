@@ -11,7 +11,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 export function Button({ variant = 'secondary', size = 'md', className, children, ...props }: ButtonProps) {
-  const base = 'rounded-btn transition-all duration-200 ease-out font-body font-medium cursor-pointer select-none focus-ring';
+  const base = 'rounded-btn transition-all duration-200 ease-out font-body font-medium cursor-pointer select-none focus-ring active:brightness-95 disabled:cursor-not-allowed disabled:opacity-50';
 
   const sizes = {
     sm: 'px-3 py-1.5 text-sm min-h-[32px]',

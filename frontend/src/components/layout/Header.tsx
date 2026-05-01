@@ -128,7 +128,7 @@ export function Header({
           <button
             onClick={() => setShowNSFWPanel(prev => !prev)}
             title={t.header.editNsfwTags}
-            className="w-7 h-7 rounded-full flex items-center justify-center text-ink-faint hover:text-ink-muted transition-colors"
+            className="w-7 h-7 rounded-full flex items-center justify-center text-ink-faint hover:text-ink-muted hover:bg-ink-surface active:brightness-95 transition-all duration-200"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="3" />
@@ -139,7 +139,7 @@ export function Header({
 
         {/* NSFW标签管理面板 */}
         {showNSFWPanel && (
-          <div className="absolute right-0 top-full mt-2 w-80 max-h-96 bg-ink-bg border border-ink-line rounded-card p-4 z-50 overflow-hidden flex flex-col shadow-lg">
+          <div className="absolute right-0 top-full mt-2 w-80 max-h-96 bg-ink-bg border border-ink-line rounded-card p-4 z-50 overflow-hidden flex flex-col shadow-lg motion-fade-in">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-ink">{t.header.nsfwTags}</h3>
               <span className="text-caption text-ink-muted">{nsfwTags.length}</span>

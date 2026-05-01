@@ -35,4 +35,34 @@
   .focus-ring {
     @apply focus:outline-none focus:ring-1 focus:ring-ink/20 focus:ring-offset-1 focus:ring-offset-ink-bg;
   }
+
+  /* 仅改变透明度/滤镜/背景位置，不参与布局计算，避免破坏虚拟网格定位 */
+  .motion-fade-in {
+    animation: motion-fade-in 220ms ease-out both;
+  }
+
+  .motion-media-in {
+    animation: motion-media-in 260ms ease-out both;
+  }
+
+  .motion-shimmer {
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
+    background-size: 220% 100%;
+    animation: motion-shimmer 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes motion-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes motion-media-in {
+  from { opacity: 0; filter: blur(6px); }
+  to { opacity: 1; filter: blur(0); }
+}
+
+@keyframes motion-shimmer {
+  from { background-position: 120% 0; }
+  to { background-position: -120% 0; }
 }
