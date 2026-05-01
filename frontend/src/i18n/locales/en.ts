@@ -117,4 +117,4 @@ export const en = {
 } as const;
 
 /** 翻译类型 — 从 en 对象自动推断，确保所有语言文件结构一致 */
-export type Translations = typeof en;
+export type Translations = { [K in keyof typeof en]: { [P in keyof typeof en[K]]: string } };

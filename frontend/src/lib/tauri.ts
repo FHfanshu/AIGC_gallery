@@ -2,7 +2,7 @@
 // 通过 @tauri-apps/api/core 的 invoke 方法实现跨进程通信
 
 import { invoke } from '@tauri-apps/api/core';
-import type { CivitaiBaseUrl, CivitaiKeyStatus, CivitaiLookupResult, ImageRecord, ImageStats, ImportResult, ImportStrategy, StorageConfig } from '../types';
+import type { CivitaiBaseUrl, CivitaiKeyStatus, CivitaiLookupResult, ImageRecord, ImageStats, ImportResult, ImportStrategy, StorageConfig, TagRecord } from '../types';
 
 const imageBase64Cache = new Map<string, Promise<string>>();
 
@@ -65,6 +65,18 @@ export const api = {
   /** 切换图片收藏状态，返回切换后的新状态 */
   toggleFavorite: (imageId: number) =>
     invoke<boolean>('toggle_favorite', { imageId }),
+
+  /** 获取所有标签 */
+  getAllTags: () =>
+    invoke<TagRecord[]>('get_all_tags'),
+
+  /** 新增标签 */
+  addTag: (name: string, color?: string) =>
+    invoke('add_tag', { name, color: color || null }),
+
+  /** 删除标签 */
+  removeTag: (tagId: number) =>
+    invoke('remove_tag', { tagId }),
   
   /** 分页获取已收藏的图片列表 */
   getFavorites: (offset = 0, limit = 50) =>

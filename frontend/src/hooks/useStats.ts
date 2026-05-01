@@ -23,5 +23,7 @@ export function useStats() {
   // 组件挂载时自动加载统计数据
   useEffect(() => { loadStats(); }, [loadStats]);
 
-  return { stats, loadStats };
+  const refresh = loadStats;
+
+  return { stats, loadStats, refresh };
 }

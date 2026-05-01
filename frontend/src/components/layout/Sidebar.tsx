@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'; // useState: 本地状态, useEffect: 副作用, useRef: DOM引用
+import { useState, useEffect } from 'react'; // useState: 本地状态, useEffect: 副作用
 import { Button, Card, Input } from '../ui'; // UI组件: 按钮、卡片、输入框
 import { truncate } from '../../lib/utils'; // 字符串截断工具
 import { api } from '../../lib/tauri'; // Tauri IPC API封装

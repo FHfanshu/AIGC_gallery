@@ -34,5 +34,7 @@ export function useFavorites() {
     return newState;
   }, []);
 
-  return { favorites, loading, loadFavorites, toggleFavorite, setFavorites };
+  const refresh = loadFavorites;
+
+  return { favorites, loading, loadFavorites, refresh, toggleFavorite, setFavorites };
 }

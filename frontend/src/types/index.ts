@@ -54,6 +54,13 @@ export interface ImageMetadata {
   raw: Record<string, string>;  // 原始未解析的键值对
 }
 
+export interface TagRecord {
+  id: number;
+  name: string;
+  color: string;
+  count?: number;
+}
+
 export interface LoRAMetadata {
   name: string;                   // LoRA 名称
   weight?: string;                // prompt 或节点中的权重

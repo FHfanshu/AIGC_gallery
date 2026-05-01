@@ -103,6 +103,8 @@ export function useGallery() {
     setImages(prev => prev.filter(img => img.id !== id));  // 从列表中过滤掉已删除项
   }, []);
 
+  const refresh = useCallback(() => loadImages(true), [loadImages]);
+
   const setLoadLimit = useCallback((nextLimit: number) => {
     setLimit(prev => {
       const normalized = Math.max(20, Math.min(120, nextLimit));
@@ -161,7 +163,7 @@ export function useGallery() {
 
   return {
     images: sortedImages, loading, error, searchQuery, setSearchQuery,
-    hasMore, loadImages, loadMore, deleteImage, setImages,
+    hasMore, loadImages, loadMore, refresh, deleteImage, setImages,
     sortBy, setSortBy, sortDir, setSortDir, setLoadLimit,
   };
 }
