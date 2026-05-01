@@ -210,6 +210,14 @@ export function ImageDetail({
             {civitaiResults[meta.model_hash] && (
               <p className="mt-1 text-ink-secondary">
                 {civitaiResults[meta.model_hash]?.model_name} · {civitaiResults[meta.model_hash]?.version_name}
+                {civitaiResults[meta.model_hash]?.page_url && (
+                  <button
+                    className="ml-2 text-ink underline underline-offset-2"
+                    onClick={() => api.openUrl(civitaiResults[meta.model_hash]!.page_url!)}
+                  >
+                    打开
+                  </button>
+                )}
               </p>
             )}
             {civitaiResults[meta.model_hash] === null && <p className="mt-1 text-ink-muted">{t.detail.notFoundOnCivitai}</p>}
@@ -237,6 +245,14 @@ export function ImageDetail({
                   {lora.hash && civitaiResults[lora.hash] && (
                     <p className="mt-0.5 text-ink-muted">
                       {civitaiResults[lora.hash]?.model_name} · {civitaiResults[lora.hash]?.version_name}
+                      {civitaiResults[lora.hash]?.page_url && (
+                        <button
+                          className="ml-2 text-ink underline underline-offset-2"
+                          onClick={() => api.openUrl(civitaiResults[lora.hash!]!.page_url!)}
+                        >
+                          打开
+                        </button>
+                      )}
                     </p>
                   )}
                   {lora.hash && civitaiResults[lora.hash] === null && (

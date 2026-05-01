@@ -119,6 +119,7 @@ export interface CivitaiLookupResult {
   version_name: string | null;
   model_name: string | null;
   model_type: string | null;
+  page_url: string | null;
   nsfw: unknown;
   trained_words: string[];
   raw: unknown;

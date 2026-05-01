@@ -74,6 +74,10 @@ export const api = {
   lookupCivitaiByHash: (hash: string) =>
     invoke<CivitaiLookupResult | null>('lookup_civitai_by_hash', { hash }),
 
+  /** 使用系统默认浏览器打开受信任链接 */
+  openUrl: (url: string) =>
+    invoke<void>('open_url', { url }),
+
   /** 导出图库数据到 zip 文件，返回结果描述 */
   exportGallery: (destPath: string) =>
     invoke<string>('export_gallery', { destPath }),

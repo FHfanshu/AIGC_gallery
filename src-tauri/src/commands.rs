@@ -501,6 +501,7 @@ pub struct CivitaiLookupResult {
     pub version_name: Option<String>,
     pub model_name: Option<String>,
     pub model_type: Option<String>,
+    pub page_url: Option<String>,
     pub nsfw: Option<serde_json::Value>,
     pub trained_words: Vec<String>,
     pub raw: serde_json::Value,
@@ -561,16 +562,63 @@ pub fn lookup_civitai_by_hash(hash: String) -> Result<Option<CivitaiLookupResult
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
         .unwrap_or_default();
+    let model_version_id = raw.get("id").and_then(|v| v.as_i64());
+    let model_id = raw.get("modelId").and_then(|v| v.as_i64());
+    let page_url = match (model_id, model_version_id) {
+        (Some(model_id), Some(version_id)) => Some(format!("{}/models/{}?modelVersionId={}", base_url, model_id, version_id)),
+        (Some(model_id), None) => Some(format!("{}/models/{}", base_url, model_id)),
+        _ => None,
+    };
+
     Ok(Some(CivitaiLookupResult {
-        model_version_id: raw.get("id").and_then(|v| v.as_i64()),
-        model_id: raw.get("modelId").and_then(|v| v.as_i64()),
+        model_version_id,
+        model_id,
         version_name: raw.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()),
         model_name: raw.pointer("/model/name").and_then(|v| v.as_str()).map(|s| s.to_string()),
         model_type: raw.pointer("/model/type").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        page_url,
         nsfw: raw.pointer("/model/nsfw").cloned(),
         trained_words,
         raw,
     }))
+}
+
+/// 使用系统默认浏览器打开 Civitai 页面。
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    if !(trimmed.starts_with("https://civitai.com/")
+        || trimmed.starts_with("https://civitai.green/")
+        || trimmed.starts_with("https://civitai.red/"))
+    {
+        return Err("Unsupported URL".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", trimmed])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 // --- 存储配置相关命令 ---
