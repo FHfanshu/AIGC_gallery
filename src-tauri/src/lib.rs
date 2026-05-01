@@ -51,6 +51,9 @@ pub fn run() {
             commands::get_image_base64,
             commands::start_import_images,
             commands::start_import_folder,
+            commands::get_civitai_key_status,
+            commands::set_civitai_api_key,
+            commands::lookup_civitai_by_hash,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -30,6 +30,23 @@ pub struct ImageRecord {
     pub is_favorite: bool,
 }
 
+/// 待插入的图片记录，用于批量导入时复用事务和 prepared statement。
+#[derive(Debug, Clone)]
+pub struct NewImageRecord {
+    pub file_path: String,
+    pub file_name: String,
+    pub file_hash: String,
+    pub width: u32,
+    pub height: u32,
+    pub prompt: String,
+    pub negative_prompt: String,
+    pub metadata_json: String,
+    pub source_type: String,
+    pub stored_path: String,
+    pub thumbnail_path: String,
+    pub storage_mode: String,
+}
+
 /// 标签记录，包含引用计数，供前端标签管理面板排序展示。
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TagRecord {
@@ -135,23 +152,23 @@ impl Database {
                  CREATE TRIGGER IF NOT EXISTS images_ai AFTER INSERT ON images BEGIN
                      INSERT INTO images_fts(rowid, prompt, negative_prompt, file_name, metadata_content)
                      VALUES (new.id, new.prompt, new.negative_prompt, new.file_name,
-                             COALESCE(json_extract(new.metadata_json, '$.characters[*].text'), '') || ' ' ||
+                             COALESCE(json_extract(new.metadata_json, '$.characters'), '') || ' ' ||
                              COALESCE(json_extract(new.metadata_json, '$.model'), ''));
                  END;
                  CREATE TRIGGER IF NOT EXISTS images_ad AFTER DELETE ON images BEGIN
                      INSERT INTO images_fts(images_fts, rowid, prompt, negative_prompt, file_name, metadata_content)
                      VALUES ('delete', old.id, old.prompt, old.negative_prompt, old.file_name,
-                             COALESCE(json_extract(old.metadata_json, '$.characters[*].text'), '') || ' ' ||
+                             COALESCE(json_extract(old.metadata_json, '$.characters'), '') || ' ' ||
                              COALESCE(json_extract(old.metadata_json, '$.model'), ''));
                  END;
                  CREATE TRIGGER IF NOT EXISTS images_au AFTER UPDATE ON images BEGIN
                      INSERT INTO images_fts(images_fts, rowid, prompt, negative_prompt, file_name, metadata_content)
                      VALUES ('delete', old.id, old.prompt, old.negative_prompt, old.file_name,
-                             COALESCE(json_extract(old.metadata_json, '$.characters[*].text'), '') || ' ' ||
+                             COALESCE(json_extract(old.metadata_json, '$.characters'), '') || ' ' ||
                              COALESCE(json_extract(old.metadata_json, '$.model'), ''));
                      INSERT INTO images_fts(rowid, prompt, negative_prompt, file_name, metadata_content)
                      VALUES (new.id, new.prompt, new.negative_prompt, new.file_name,
-                             COALESCE(json_extract(new.metadata_json, '$.characters[*].text'), '') || ' ' ||
+                             COALESCE(json_extract(new.metadata_json, '$.characters'), '') || ' ' ||
                              COALESCE(json_extract(new.metadata_json, '$.model'), ''));
                  END;"
             ).map_err(|e| e.to_string())?;
@@ -172,6 +189,36 @@ impl Database {
             }
             conn.execute_batch("PRAGMA user_version = 3").map_err(|e| e.to_string())?;
         }
+
+        // 修复旧版本 FTS 触发器中 SQLite 不支持的 JSON 通配符路径，避免插入图片记录时失败。
+        conn.execute_batch(
+            "DROP TRIGGER IF EXISTS images_ai;
+             DROP TRIGGER IF EXISTS images_ad;
+             DROP TRIGGER IF EXISTS images_au;
+             CREATE TRIGGER images_ai AFTER INSERT ON images BEGIN
+                 INSERT INTO images_fts(rowid, prompt, negative_prompt, file_name, metadata_content)
+                 VALUES (new.id, new.prompt, new.negative_prompt, new.file_name,
+                         COALESCE(json_extract(new.metadata_json, '$.characters'), '') || ' ' ||
+                         COALESCE(json_extract(new.metadata_json, '$.model'), ''));
+             END;
+             CREATE TRIGGER images_ad AFTER DELETE ON images BEGIN
+                 INSERT INTO images_fts(images_fts, rowid, prompt, negative_prompt, file_name, metadata_content)
+                 VALUES ('delete', old.id, old.prompt, old.negative_prompt, old.file_name,
+                         COALESCE(json_extract(old.metadata_json, '$.characters'), '') || ' ' ||
+                         COALESCE(json_extract(old.metadata_json, '$.model'), ''));
+             END;
+             CREATE TRIGGER images_au AFTER UPDATE ON images BEGIN
+                 INSERT INTO images_fts(images_fts, rowid, prompt, negative_prompt, file_name, metadata_content)
+                 VALUES ('delete', old.id, old.prompt, old.negative_prompt, old.file_name,
+                         COALESCE(json_extract(old.metadata_json, '$.characters'), '') || ' ' ||
+                         COALESCE(json_extract(old.metadata_json, '$.model'), ''));
+                 INSERT INTO images_fts(rowid, prompt, negative_prompt, file_name, metadata_content)
+                 VALUES (new.id, new.prompt, new.negative_prompt, new.file_name,
+                         COALESCE(json_extract(new.metadata_json, '$.characters'), '') || ' ' ||
+                         COALESCE(json_extract(new.metadata_json, '$.model'), ''));
+             END;
+             INSERT INTO images_fts(images_fts) VALUES('rebuild');"
+        ).map_err(|e| format!("FTS trigger repair error: {}", e))?;
 
         Ok(Self { conn })
     }
@@ -202,6 +249,48 @@ impl Database {
             params![file_hash],
             |row| row.get(0),
         ).map_err(|e| e.to_string())
+    }
+
+    pub fn insert_images_batch(&self, images: &[NewImageRecord]) -> Result<Vec<String>, String> {
+        if images.is_empty() { return Ok(Vec::new()); }
+        self.conn.execute_batch("BEGIN IMMEDIATE TRANSACTION").map_err(|e| e.to_string())?;
+        let result = (|| -> Result<Vec<String>, String> {
+            let mut stmt = self.conn.prepare(
+                "INSERT OR IGNORE INTO images (file_path, file_name, file_hash, width, height, prompt, negative_prompt, metadata_json, source_type, stored_path, thumbnail_path, storage_mode)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
+            ).map_err(|e| e.to_string())?;
+            let mut inserted = Vec::new();
+            for img in images {
+                let changed = stmt.execute(params![
+                    img.file_path,
+                    img.file_name,
+                    img.file_hash,
+                    img.width,
+                    img.height,
+                    img.prompt,
+                    img.negative_prompt,
+                    img.metadata_json,
+                    img.source_type,
+                    img.stored_path,
+                    img.thumbnail_path,
+                    img.storage_mode,
+                ]).map_err(|e| e.to_string())?;
+                if changed > 0 {
+                    inserted.push(img.file_path.clone());
+                }
+            }
+            Ok(inserted)
+        })();
+        match result {
+            Ok(inserted) => {
+                self.conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+                Ok(inserted)
+            }
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
     }
 
     pub fn image_exists(&self, file_hash: &str) -> Result<bool, String> {
@@ -284,7 +373,7 @@ impl Database {
                  LEFT JOIN favorites f ON i.id = f.image_id
                  WHERE i.id IN (SELECT rowid FROM images_fts WHERE images_fts MATCH ?1)
                     OR i.negative_prompt LIKE ?2
-                    OR json_extract(i.metadata_json, '$.characters[*].text') LIKE ?2
+                    OR json_extract(i.metadata_json, '$.characters') LIKE ?2
                     OR json_extract(i.metadata_json, '$.model') LIKE ?2
                  ORDER BY i.created_at DESC LIMIT ?3 OFFSET ?4"
             ).map_err(|e| e.to_string())?;

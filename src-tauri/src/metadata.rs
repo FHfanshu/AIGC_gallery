@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 /// 从 PNG 中解析出的图片元数据
@@ -72,8 +72,13 @@ pub fn parse_png_metadata(path: &Path) -> Result<ImageMetadata, String> {
         }
         let chunk_type = String::from_utf8_lossy(&type_buf).to_string();
 
-        let mut data = vec![0u8; length as usize];
-        if reader.read_exact(&mut data).is_err() {
+        let mut data = Vec::new();
+        if chunk_type == "tEXt" || chunk_type == "iTXt" {
+            data.resize(length as usize, 0);
+            if reader.read_exact(&mut data).is_err() {
+                break;
+            }
+        } else if reader.seek(SeekFrom::Current(length as i64)).is_err() {
             break;
         }
 

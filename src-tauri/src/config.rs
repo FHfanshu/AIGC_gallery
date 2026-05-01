@@ -13,10 +13,27 @@ pub struct AppConfig {
     /// 导入策略：copy / hardlink_then_copy
     #[serde(default = "default_import_strategy")]
     pub import_strategy: String,
+    /// Civitai API 基础域名预设
+    #[serde(default = "default_civitai_base_url")]
+    pub civitai_base_url: String,
 }
 
 fn default_import_strategy() -> String {
-    "hardlink_then_copy".to_string()
+    "copy".to_string()
+}
+
+pub fn default_civitai_base_url() -> String {
+    "https://civitai.com".to_string()
+}
+
+pub fn normalize_civitai_base_url(base_url: &str) -> String {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    match trimmed {
+        "civitai.com" | "https://civitai.com" => "https://civitai.com".to_string(),
+        "civitai.green" | "https://civitai.green" => "https://civitai.green".to_string(),
+        "civitai.red" | "https://civitai.red" => "https://civitai.red".to_string(),
+        _ => default_civitai_base_url(),
+    }
 }
 
 impl Default for AppConfig {
@@ -24,6 +41,7 @@ impl Default for AppConfig {
         Self {
             storage_dir: None,
             import_strategy: default_import_strategy(),
+            civitai_base_url: default_civitai_base_url(),
         }
     }
 }
