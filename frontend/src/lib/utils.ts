@@ -279,10 +279,11 @@ export function truncate(str: string, len: number): string {
  */
 export function getSourceLabel(source: string): { label: string; color: string } {
   const map: Record<string, { label: string; color: string }> = {
-    a1111: { label: 'A1111', color: '#22c55e' },     // 绿色 — Stable Diffusion WebUI
-    comfyui: { label: 'ComfyUI', color: '#3b82f6' }, // 蓝色 — ComfyUI 节点式工具
-    novelai: { label: 'NovelAI', color: '#f472b6' }, // 粉色 — NovelAI
-    unknown: { label: 'Unknown', color: '#6b7280' }, // 灰色 — 未知来源
+    a1111: { label: 'A1111', color: '#22c55e' },       // 绿色 — Stable Diffusion WebUI
+    comfyui: { label: 'ComfyUI', color: '#3b82f6' },   // 蓝色 — ComfyUI 节点式工具
+    novelai: { label: 'NovelAI', color: '#f472b6' },   // 粉色 — NovelAI
+    'gpt-image': { label: 'GPT', color: '#10b981' },   // 青绿色 — OpenAI GPT-image
+    unknown: { label: 'Unknown', color: '#6b7280' },   // 灰色 — 未知来源
   };
   return map[source] || map.unknown;  // 未匹配时默认返回 Unknown
 }

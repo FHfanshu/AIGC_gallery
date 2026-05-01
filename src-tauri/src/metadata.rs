@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{BufReader, Read};
 use std::path::Path;
 
 /// 从 PNG 中解析出的图片元数据
@@ -56,6 +56,8 @@ pub fn parse_png_metadata(path: &Path) -> Result<ImageMetadata, String> {
 
     // 收集所有文本 chunk 的 key-value 对
     let mut text_chunks: HashMap<String, String> = HashMap::new();
+    // 用于检测 C2PA/GPT-image 的原始数据缓冲区
+    let mut c2pa_raw: Vec<u8> = Vec::new();
 
     // 逐 chunk 读取：length(4B) + type(4B) + data(length B) + crc(4B)
     loop {
@@ -73,12 +75,8 @@ pub fn parse_png_metadata(path: &Path) -> Result<ImageMetadata, String> {
         let chunk_type = String::from_utf8_lossy(&type_buf).to_string();
 
         let mut data = Vec::new();
-        if chunk_type == "tEXt" || chunk_type == "iTXt" {
-            data.resize(length as usize, 0);
-            if reader.read_exact(&mut data).is_err() {
-                break;
-            }
-        } else if reader.seek(SeekFrom::Current(length as i64)).is_err() {
+        data.resize(length as usize, 0);
+        if reader.read_exact(&mut data).is_err() {
             break;
         }
 
@@ -116,12 +114,21 @@ pub fn parse_png_metadata(path: &Path) -> Result<ImageMetadata, String> {
                     }
                 }
             }
+        } else if chunk_type == "caBX" || chunk_type == "caBL" || chunk_type == "IDAT" {
+            // C2PA 专用 chunk（caBX/caBL）或图像数据（IDAT），扫描前 8KB 检测 C2PA 标记
+            let scan_len = data.len().min(8192);
+            c2pa_raw.extend_from_slice(&data[..scan_len]);
         }
 
         // IEND 是 PNG 最后一个 chunk，遇到即停止
         if chunk_type == "IEND" {
             break;
         }
+    }
+
+    // 先检测 C2PA/GPT-image（即使没有 tEXt chunk 也可能有 C2PA 数据）
+    if let Some(meta) = detect_c2pa_gpt_image(&c2pa_raw, &text_chunks) {
+        return Ok(meta);
     }
 
     if text_chunks.is_empty() {
@@ -143,6 +150,8 @@ pub fn parse_png_metadata(path: &Path) -> Result<ImageMetadata, String> {
         // NovelAI：存在 "Description" 或 "Comment" key
         return Ok(parse_novelai_metadata(&text_chunks));
     }
+
+    // C2PA / GPT-image 检测已在函数开头执行，此处跳过
 
     // 未知格式：保留原始数据，将所有 value 拼接作为 prompt
     let mut meta = ImageMetadata::default();
@@ -389,6 +398,51 @@ fn parse_novelai_metadata(raw: &HashMap<String, String>) -> ImageMetadata {
     }
 
     meta
+}
+
+/// 检测 C2PA / GPT-image 元数据
+///
+/// 扫描 PNG 非文本 chunk 的原始数据，查找 C2PA 标记（如 "gpt-image"、"OpenAI" 等）。
+/// 如果检测到，返回解析后的 ImageMetadata。
+fn detect_c2pa_gpt_image(c2pa_raw: &[u8], text_chunks: &HashMap<String, String>) -> Option<ImageMetadata> {
+    if c2pa_raw.is_empty() {
+        return None;
+    }
+
+    // 在原始数据中搜索 GPT-image 特征字符串
+    let raw_str = String::from_utf8_lossy(c2pa_raw);
+    let has_gpt = raw_str.contains("gpt-image") || raw_str.contains("gpt_image");
+    let has_openai = raw_str.contains("OpenAI") || raw_str.contains("openai");
+
+    if !has_gpt && !has_openai {
+        return None;
+    }
+
+    let mut meta = ImageMetadata::default();
+    meta.source = "gpt-image".to_string();
+    meta.raw = text_chunks.clone();
+
+    // 尝试从 C2PA 数据中提取版本信息
+    // 格式示例：ActionsSoftwareAgentVersion "2.0"
+    if let Some(version_start) = raw_str.find("gpt-image") {
+        // gpt-image 后面可能跟版本号，如 "gpt-image-2" 或 "gpt-image 2.0"
+        let after = &raw_str[version_start..];
+        if let Some(ver_end) = after.find(|c: char| !c.is_alphanumeric() && c != '-' && c != '.' && c != '_') {
+            let agent = &after[..ver_end.min(32)];
+            meta.model = format!("GPT-image ({})", agent);
+        } else {
+            meta.model = "GPT-image".to_string();
+        }
+    } else {
+        meta.model = "GPT-image (OpenAI)".to_string();
+    }
+
+    // GPT-image 通常没有传统意义上的 prompt/negative_prompt
+    // 但如果有 text_chunks 中的描述信息，可以使用
+    meta.prompt = String::new();
+    meta.negative_prompt = String::new();
+
+    Some(meta)
 }
 
 /// 获取图片的宽高尺寸
