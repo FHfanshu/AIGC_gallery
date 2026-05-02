@@ -38,3 +38,6 @@ src-tauri/Cargo.lock
 
 # Tauri generated
 src-tauri/gen/schemas/
+
+# AI agent guide — local only
+AGENTS.md
