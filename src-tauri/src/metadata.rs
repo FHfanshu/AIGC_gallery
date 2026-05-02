@@ -1,18 +1,23 @@
-//! PNG 元数据解析模块
+//! 图片元数据解析入口
 //!
-//! 从 PNG 文件的 tEXt / iTXt chunk 中提取 AI 绘图元数据。
-//! 支持三种主流来源的自动检测与解析：
-//! - **A1111 / Forge**：`parameters` 字段
-//! - **ComfyUI**：`prompt` / `workflow` JSON
-//! - **NovelAI**：`Description` + `Comment` JSON（含 v4 角色提示词）
+//! 按文件格式分派到 PNG / JPEG / WebP 解析器，并复用 A1111 / ComfyUI / NovelAI 的语义解析。
+
+#[path = "metadata_jpeg.rs"]
+mod metadata_jpeg;
+#[path = "metadata_png.rs"]
+mod metadata_png;
+#[path = "metadata_webp.rs"]
+mod metadata_webp;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufReader, Read};
 use std::path::Path;
 
-/// 从 PNG 中解析出的图片元数据
+pub use metadata_jpeg::parse_jpeg_metadata;
+pub use metadata_png::parse_png_metadata;
+pub use metadata_webp::parse_webp_metadata;
+
+/// 从图片中解析出的图片元数据
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ImageMetadata {
     pub prompt: String,           // 正向提示词
@@ -25,17 +30,17 @@ pub struct ImageMetadata {
     pub width: Option<u32>,       // 图片宽度
     pub height: Option<u32>,      // 图片高度
     pub parameter_groups: Vec<ParameterGroup>, // 按生成阶段/节点分组的参数
-    pub source: String,           // 来源类型："a1111" / "comfyui" / "novelai" / "unknown"
+    pub source: String,           // 来源类型："a1111" / "comfyui" / "novelai" / "gpt-image" / "unknown"
     pub characters: Vec<CharacterPrompt>, // NovelAI v4 角色级提示词
-    pub raw: HashMap<String, String>,     // 原始 key-value 数据（保留完整 chunk）
+    pub raw: HashMap<String, String>,     // 原始 key-value 数据
 }
 
 /// NovelAI v4 角色提示词结构
 /// 包含角色描述文本和在画面中的中心坐标
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct CharacterPrompt {
-    pub caption: String,               // 角色描述文本
-    pub centers: Vec<(f64, f64)>,      // 角色在画面中的归一化坐标 (x, y)
+    pub caption: String,          // 角色描述文本
+    pub centers: Vec<(f64, f64)>, // 角色在画面中的归一化坐标 (x, y)
 }
 
 /// 生成参数分组，保留 ComfyUI 节点和 A1111 Hires fix 等阶段信息。
@@ -52,128 +57,75 @@ pub struct ParameterItem {
     pub value: String,
 }
 
-/// 解析 PNG 文件的 tEXt / iTXt chunk，自动检测来源并返回结构化元数据
-///
-/// # 流程
-/// 1. 验证 PNG 签名（8 字节魔数）
-/// 2. 遍历所有 chunk，收集 tEXt 和 iTXt 类型的 key-value
-/// 3. 根据 key 特征判断来源，调用对应的解析器
-pub fn parse_png_metadata(path: &Path) -> Result<ImageMetadata, String> {
-    let file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
-    let mut reader = BufReader::new(file);
-
-    // 验证 PNG 文件签名：89 50 4E 47 0D 0A 1A 0A
-    let mut sig = [0u8; 8];
-    reader.read_exact(&mut sig).map_err(|e| e.to_string())?;
-    if sig != [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] {
-        return Err("Not a valid PNG file".to_string());
+/// 根据文件扩展名分派元数据解析器。
+pub fn parse_image_metadata(path: &Path) -> Result<ImageMetadata, String> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    match ext.as_str() {
+        "png" => parse_png_metadata(path),
+        "jpg" | "jpeg" => parse_jpeg_metadata(path),
+        "webp" => parse_webp_metadata(path),
+        _ => Err("Unsupported image format".to_string()),
     }
+}
 
-    // 收集所有文本 chunk 的 key-value 对
-    let mut text_chunks: HashMap<String, String> = HashMap::new();
-    // 用于检测 C2PA/GPT-image 的原始数据缓冲区
-    let mut c2pa_raw: Vec<u8> = Vec::new();
-
-    // 逐 chunk 读取：length(4B) + type(4B) + data(length B) + crc(4B)
-    loop {
-        let mut length_buf = [0u8; 4];
-        match reader.read_exact(&mut length_buf) {
-            Ok(_) => {}
-            Err(_) => break,
-        }
-        let length = u32::from_be_bytes(length_buf);
-
-        let mut type_buf = [0u8; 4];
-        if reader.read_exact(&mut type_buf).is_err() {
-            break;
-        }
-        let chunk_type = String::from_utf8_lossy(&type_buf).to_string();
-
-        let mut data = Vec::new();
-        data.resize(length as usize, 0);
-        if reader.read_exact(&mut data).is_err() {
-            break;
-        }
-
-        // 跳过 CRC 校验（不做验证，仅消费字节）
-        let mut crc = [0u8; 4];
-        if reader.read_exact(&mut crc).is_err() {
-            break;
-        }
-
-        // tEXt chunk：key\0value（Latin-1 编码，无压缩）
-        if chunk_type == "tEXt" {
-            if let Some(null_pos) = data.iter().position(|&b| b == 0) {
-                let key = String::from_utf8_lossy(&data[..null_pos]).to_string();
-                let value = String::from_utf8_lossy(&data[null_pos + 1..]).to_string();
-                text_chunks.insert(key, value);
-            }
-        } else if chunk_type == "iTXt" {
-            // iTXt 格式：keyword\0compression_flag\0compression_method\0language_tag\0translated_keyword\0text
-            if let Some(null_pos) = data.iter().position(|&b| b == 0) {
-                let key = String::from_utf8_lossy(&data[..null_pos]).to_string();
-                let rest = &data[null_pos + 1..];
-                // 跳过：compression_flag(1B) + compression_method(1B) = 2 字节
-                if rest.len() > 2 {
-                    let mut pos = 2;
-                    // 跳过 language_tag 和 translated_keyword（各以 \0 分隔）
-                    for _ in 0..2 {
-                        if let Some(p) = rest[pos..].iter().position(|&b| b == 0) {
-                            pos += p + 1;
-                        }
-                    }
-                    let text_data = &rest[pos..];
-                    // 仅处理未压缩的 UTF-8 文本
-                    if let Ok(value) = String::from_utf8(text_data.to_vec()) {
-                        text_chunks.insert(key, value);
-                    }
-                }
-            }
-        } else if chunk_type != "IDAT" && chunk_type != "IEND" {
-            // 扫描所有非图像数据、非结束标记的 chunk，覆盖更多 C2PA/JUMBF 实现
-            let scan_len = data.len().min(8192);
-            c2pa_raw.extend_from_slice(&data[..scan_len]);
-        }
-
-        // IEND 是 PNG 最后一个 chunk，遇到即停止
-        if chunk_type == "IEND" {
-            break;
-        }
-    }
-
-    // 先检测 C2PA/GPT-image（即使没有 tEXt chunk 也可能有 C2PA 数据）
-    if let Some(meta) = detect_c2pa_gpt_image(&c2pa_raw, &text_chunks) {
-        return Ok(meta);
-    }
-
+/// 从容器文本字段中统一识别来源并返回结构化元数据。
+pub fn parse_text_metadata(text_chunks: HashMap<String, String>, fallback_source: &str) -> Result<ImageMetadata, String> {
     if text_chunks.is_empty() {
-        return Err("No metadata found in PNG".to_string());
+        return Err(format!("No metadata found in {}", fallback_source));
     }
 
-    // 根据 key 特征自动检测来源，按优先级依次尝试
-    if let Some(parameters) = text_chunks.get("parameters") {
-        // A1111 / Forge：存在 "parameters" key
-        return Ok(parse_a1111_metadata(parameters, &text_chunks));
+    if let Some(parameters) = text_chunks.get("parameters").cloned() {
+        return Ok(parse_a1111_metadata(&parameters, &text_chunks));
     }
 
     if text_chunks.contains_key("prompt") || text_chunks.contains_key("workflow") {
-        // ComfyUI：存在 "prompt" 或 "workflow" key
         return Ok(parse_comfyui_metadata(&text_chunks));
     }
 
     if text_chunks.contains_key("Description") || text_chunks.contains_key("Comment") {
-        // NovelAI：存在 "Description" 或 "Comment" key
         return Ok(parse_novelai_metadata(&text_chunks));
     }
 
-    // C2PA / GPT-image 检测已在函数开头执行，此处跳过
-
-    // 未知格式：保留原始数据，将所有 value 拼接作为 prompt
     let mut meta = ImageMetadata::default();
     meta.source = "unknown".to_string();
     meta.raw = text_chunks.clone();
     meta.prompt = text_chunks.values().cloned().collect::<Vec<_>>().join(" ");
     Ok(meta)
+}
+
+/// 判断文本是否像 Stable Diffusion 生成参数。
+pub fn looks_like_generation_params(value: &str) -> bool {
+    let value = value.to_lowercase();
+    (value.contains("steps:") && value.contains("sampler:"))
+        || value.contains("negative prompt:")
+        || value.contains("cfg scale:")
+        || value.contains("seed:")
+        || value.contains("size:")
+        || value.contains("model:")
+}
+
+/// 将 EXIF / 文本元数据写入 map，并在检测到生成参数时补充 `parameters` 键。
+pub(crate) fn insert_detected_text(text_chunks: &mut HashMap<String, String>, key: &str, value: String) {
+    let value = clean_metadata_text(&value);
+    if value.is_empty() {
+        return;
+    }
+
+    if looks_like_generation_params(&value) {
+        text_chunks.entry("parameters".to_string()).or_insert_with(|| value.clone());
+    }
+    text_chunks.entry(key.to_string()).or_insert(value);
+}
+
+/// 统一清理 EXIF / 容器文本前缀，避免 A1111 参数前混入不可见标记。
+pub(crate) fn clean_metadata_text(value: &str) -> String {
+    value
+        .trim_start_matches("ASCII\0\0\0")
+        .trim_start_matches("UNICODE\0")
+        .trim_start_matches("JIS\0\0\0\0\0")
+        .trim_matches(char::from(0))
+        .trim()
+        .to_string()
 }
 
 /// 解析 A1111 / Forge 格式的 parameters 字段
@@ -189,75 +141,128 @@ fn parse_a1111_metadata(parameters: &str, raw: &HashMap<String, String>) -> Imag
     meta.source = "a1111".to_string();
     meta.raw = raw.clone();
 
-    // 按 "\nNegative prompt:" 分割：前半部分为正向提示词
-    let parts: Vec<&str> = parameters.split("\nNegative prompt:").collect();
-    meta.prompt = parts[0].trim().to_string();
+    // JPEG / EXIF 中换行可能被工具改写，不能只匹配 "\nNegative prompt:"。
+    if let Some(neg_pos) = parameters.find("Negative prompt:") {
+        meta.prompt = parameters[..neg_pos].trim().to_string();
+        let neg_and_rest = &parameters[neg_pos + "Negative prompt:".len()..];
+        let steps_pos = neg_and_rest.find("Steps:");
+        meta.negative_prompt = steps_pos
+            .map(|pos| neg_and_rest[..pos].trim())
+            .unwrap_or_else(|| neg_and_rest.trim())
+            .trim_start_matches(',')
+            .trim()
+            .to_string();
 
-    if parts.len() > 1 {
-        let neg_and_rest = parts[1];
-        // 按 "\nSteps:" 分割：前半部分为反向提示词，后半部分为生成参数
-        let rest_parts: Vec<&str> = neg_and_rest.split("\nSteps:").collect();
-        meta.negative_prompt = rest_parts[0].trim().to_string();
-
-        if rest_parts.len() > 1 {
-            let params_str = format!("Steps:{}", rest_parts[1]);
-            let params = parse_a1111_params(&params_str);
-            meta.steps = params.get("Steps").and_then(|v| v.parse().ok());
-            meta.sampler = params.get("Sampler").cloned().unwrap_or_default();
-            meta.cfg_scale = params.get("CFG scale").and_then(|v| v.parse().ok());
-            meta.seed = params.get("Seed").and_then(|v| v.parse().ok());
-            meta.model = params.get("Model").cloned().unwrap_or_default();
-            // Size 格式为 "WxH"
-            meta.width = params.get("Size").and_then(|s| s.split('x').next()?.parse().ok());
-            meta.height = params.get("Size").and_then(|s| s.split('x').nth(1)?.parse().ok());
-            meta.parameter_groups = build_a1111_parameter_groups(&params);
+        if let Some(pos) = steps_pos {
+            apply_a1111_params(&mut meta, &format!("Steps:{}", &neg_and_rest[pos + "Steps:".len()..]));
         }
+    } else if let Some(steps_pos) = parameters.find("Steps:") {
+        meta.prompt = parameters[..steps_pos].trim().to_string();
+        apply_a1111_params(&mut meta, &parameters[steps_pos..]);
+    } else {
+        meta.prompt = parameters.trim().to_string();
     }
 
     meta
 }
 
+fn apply_a1111_params(meta: &mut ImageMetadata, params_str: &str) {
+    let params = parse_a1111_params(params_str);
+    meta.steps = params.get("Steps").and_then(|v| v.parse().ok());
+    meta.sampler = params.get("Sampler").cloned().unwrap_or_default();
+    meta.cfg_scale = params.get("CFG scale").and_then(|v| v.parse().ok());
+    meta.seed = params.get("Seed").and_then(|v| v.parse().ok());
+    meta.model = params.get("Model").cloned().unwrap_or_default();
+    // Size 格式为 "WxH"
+    meta.width = params.get("Size").and_then(|s| s.split('x').next()?.parse().ok());
+    meta.height = params.get("Size").and_then(|s| s.split('x').nth(1)?.parse().ok());
+    meta.parameter_groups = build_a1111_parameter_groups(&params);
+}
+
 /// 解析 A1111 参数字符串为 key-value 映射
 ///
-/// 按 ", " 分割，但正确处理值中包含逗号的情况（如 "DPM++ 2M Karras"）
+/// 逐字扫描 `key: value`，只把逗号后出现已知参数键名的片段识别为新字段，避免 TIPO JSON / prompt 中的冒号误拆。
 fn parse_a1111_params(params_str: &str) -> HashMap<String, String> {
-    let mut params = HashMap::new();
-    let mut current_key = String::new();
-    let mut current_value = String::new();
+    let keys = a1111_param_keys();
+    let mut positions: Vec<(usize, &str)> = keys
+        .iter()
+        .filter_map(|key| find_param_key(params_str, key).map(|pos| (pos, *key)))
+        .collect();
+    positions.sort_by_key(|(pos, _)| *pos);
+    positions.dedup_by_key(|(pos, _)| *pos);
 
-    for part in params_str.split(", ") {
-        if let Some(colon_pos) = part.find(':') {
-            // 遇到新的 key:value 对，保存上一个
-            if !current_key.is_empty() {
-                params.insert(current_key.trim().to_string(), current_value.trim().to_string());
+    let mut params = HashMap::new();
+    for (idx, (start, key)) in positions.iter().enumerate() {
+        let value_start = start + key.len() + 1;
+        let value_end = positions.get(idx + 1).map(|(pos, _)| trim_param_separator(params_str, *pos)).unwrap_or(params_str.len());
+        if value_start <= value_end && value_end <= params_str.len() {
+            let value = params_str[value_start..value_end].trim().trim_matches(',').trim();
+            if !value.is_empty() {
+                params.insert((*key).to_string(), value.to_string());
             }
-            current_key = part[..colon_pos].to_string();
-            current_value = part[colon_pos + 1..].to_string();
-        } else {
-            // 没有冒号说明是上一个 value 的延续（值中含逗号）
-            current_value.push_str(", ");
-            current_value.push_str(part);
         }
-    }
-    if !current_key.is_empty() {
-        params.insert(current_key.trim().to_string(), current_value.trim().to_string());
     }
 
     params
 }
 
+fn a1111_param_keys() -> &'static [&'static str] {
+    &[
+        "Steps", "Sampler", "Schedule type", "CFG scale", "Seed", "Size", "Model hash", "Model",
+        "Denoising strength", "Clip skip", "Style Selector Enabled", "Style Selector Randomize", "Style Selector Style",
+        "ADetailer model", "ADetailer confidence", "ADetailer dilate erode", "ADetailer mask blur",
+        "ADetailer denoising strength", "ADetailer inpaint only masked", "ADetailer inpaint padding",
+        "ADetailer use inpaint width height", "ADetailer inpaint width", "ADetailer inpaint height", "ADetailer version",
+        "Wildcard prompt", "TIPO Parameters", "TIPO prompt", "TIPO nl prompt", "TIPO format",
+        "Hires upscale", "Hires steps", "Hires upscaler", "Hires resize", "Hires prompt", "Hires negative prompt",
+        "Lora hashes", "Emphasis", "Pad conds", "Version",
+    ]
+}
+
+fn find_param_key(text: &str, key: &str) -> Option<usize> {
+    let pattern = format!("{}:", key);
+    let mut search_start = 0;
+    while let Some(relative) = text[search_start..].find(&pattern) {
+        let pos = search_start + relative;
+        let before = text[..pos].chars().rev().find(|ch| !ch.is_whitespace());
+        if pos == 0 || before == Some(',') || before == Some('\n') || before == Some('\r') {
+            return Some(pos);
+        }
+        search_start = pos + pattern.len();
+    }
+    None
+}
+
+fn trim_param_separator(text: &str, next_pos: usize) -> usize {
+    text[..next_pos]
+        .trim_end()
+        .trim_end_matches(',')
+        .trim_end()
+        .len()
+}
+
 /// 将 A1111 参数按普通生成和 Hires fix 分组。
 fn build_a1111_parameter_groups(params: &HashMap<String, String>) -> Vec<ParameterGroup> {
-    let generation_keys = ["Steps", "Sampler", "CFG scale", "Seed", "Size", "Model"];
+    let generation_keys = ["Steps", "Sampler", "Schedule type", "CFG scale", "Seed", "Size", "Model hash", "Model", "Clip skip"];
     let hires_keys = [
         "Hires upscale", "Hires upscaler", "Hires steps", "Hires resize", "Hires prompt",
         "Hires negative prompt", "Denoising strength", "First pass size",
     ];
+    let adetailer_keys = [
+        "ADetailer model", "ADetailer confidence", "ADetailer dilate erode", "ADetailer mask blur",
+        "ADetailer denoising strength", "ADetailer inpaint only masked", "ADetailer inpaint padding",
+        "ADetailer use inpaint width height", "ADetailer inpaint width", "ADetailer inpaint height", "ADetailer version",
+    ];
+    let tipo_keys = ["TIPO Parameters", "TIPO prompt", "TIPO nl prompt", "TIPO format", "Wildcard prompt"];
+    let extra_keys = ["Style Selector Enabled", "Style Selector Randomize", "Style Selector Style", "Lora hashes", "Emphasis", "Pad conds", "Version"];
 
     let generation = build_param_group("Generation", &generation_keys, params);
     let hires = build_param_group("Hires fix", &hires_keys, params);
+    let adetailer = build_param_group("ADetailer", &adetailer_keys, params);
+    let tipo = build_param_group("TIPO", &tipo_keys, params);
+    let extra = build_param_group("Extra", &extra_keys, params);
 
-    [generation, hires]
+    [generation, hires, adetailer, tipo, extra]
         .into_iter()
         .filter(|group| !group.params.is_empty())
         .collect()
@@ -648,7 +653,7 @@ fn non_empty_str(value: Option<&serde_json::Value>) -> Option<&str> {
 /// GPT-image-2 刚上线早期部分文件仍可能写入 `gpt-4o` / `GPT-4o` / `4o` 相关字段，
 /// 因此这里同时覆盖 OpenAI GPT-image 与 4o 系列标记。
 /// 如果检测到，返回解析后的 ImageMetadata。
-fn detect_c2pa_gpt_image(c2pa_raw: &[u8], text_chunks: &HashMap<String, String>) -> Option<ImageMetadata> {
+pub(crate) fn detect_c2pa_gpt_image(c2pa_raw: &[u8], text_chunks: &HashMap<String, String>) -> Option<ImageMetadata> {
     if c2pa_raw.is_empty() {
         return None;
     }
