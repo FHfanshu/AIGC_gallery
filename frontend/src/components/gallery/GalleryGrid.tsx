@@ -9,12 +9,12 @@ import { Card } from '../ui';
 import { useI18n } from '../../i18n';
 import type { ImageRecord } from '../../types';
 
-// 根据卡片宽度推导列数和行高，避免详情面板开关后虚拟行距失真
-const MIN_CARD_WIDTH = 170;
-const MAX_COLUMN_COUNT = 4;
-const GRID_GAP = 24;
-const CARD_CAPTION_HEIGHT = 39;
-const ROW_GAP = 32;
+// 卡片最小宽度（决定列数），实际宽度根据容器自动撑满
+const MIN_CARD_WIDTH = 140;
+const MAX_COLUMNS = 8;
+const GRID_GAP = 16;
+const CARD_CAPTION_HEIGHT = 52;
+const ROW_GAP = 16;
 
 interface GalleryGridProps {
   images: ImageRecord[];
@@ -24,27 +24,34 @@ interface GalleryGridProps {
   onSelect: (image: ImageRecord) => void;
   onToggleFavorite: (imageId: number) => void;
   onHideImage?: (imageId: number) => void;
+  isImageHidden?: (imageId: number) => boolean;
+  onUnhideImage?: (imageId: number) => void;
   onLoadMore: () => void;
   onViewportCapacityChange?: (capacity: number) => void;
+  scrollToImageId?: number | null;
 }
 
 /** 画廊网格：基于虚拟滚动的图片列表，滚动到底部自动触发加载更多 */
 export function GalleryGrid({
-  images, loading, hasMore, selectedId, onSelect, onToggleFavorite, onHideImage, onLoadMore, onViewportCapacityChange,
+  images, loading, hasMore, selectedId, onSelect, onToggleFavorite, onHideImage, isImageHidden, onUnhideImage, onLoadMore, onViewportCapacityChange, scrollToImageId,
 }: GalleryGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const { t } = useI18n();
   const [containerWidth, setContainerWidth] = useState(0);
+  const lastScrollTopRef = useRef(0);
+  const scrollEndTimerRef = useRef<number | null>(null);
+  const scrollRafRef = useRef<number | null>(null);
 
-  const columnCount = useMemo(() => {
-    if (containerWidth <= 0) return MAX_COLUMN_COUNT;
-    return Math.max(1, Math.min(MAX_COLUMN_COUNT, Math.floor((containerWidth + GRID_GAP) / (MIN_CARD_WIDTH + GRID_GAP))));
+  // 根据容器宽度计算列数，卡片宽度自适应撑满
+  const { columnCount, cardWidth } = useMemo(() => {
+    if (containerWidth <= 0) return { columnCount: 1, cardWidth: MIN_CARD_WIDTH };
+    const cols = Math.max(1, Math.min(MAX_COLUMNS,
+      Math.floor((containerWidth + GRID_GAP) / (MIN_CARD_WIDTH + GRID_GAP))));
+    const cw = (containerWidth - (cols - 1) * GRID_GAP) / cols;
+    return { columnCount: cols, cardWidth: Math.max(MIN_CARD_WIDTH, cw) };
   }, [containerWidth]);
 
-  const cardWidth = containerWidth > 0
-    ? (containerWidth - GRID_GAP * (columnCount - 1)) / columnCount
-    : MIN_CARD_WIDTH;
-  const rowHeight = Math.ceil(cardWidth + CARD_CAPTION_HEIGHT);
+  const rowHeight = cardWidth + CARD_CAPTION_HEIGHT;
   const rows = Math.ceil(images.length / columnCount); // 总行数
 
   // 虚拟滚动实例
@@ -66,19 +73,28 @@ export function GalleryGrid({
   }, [virtualizer.getVirtualItems(), rows, hasMore, loading, onLoadMore]);
 
   // 详情面板开关或窗口缩放会改变网格宽度，虚拟滚动必须同步重算行高
+  // ResizeObserver 监听容器宽度变化，防抖跨过面板动画避免列数跳变
   useEffect(() => {
     const el = parentRef.current;
     if (!el) return;
-    const updateWidth = () => setContainerWidth(el.clientWidth - 64);
-    updateWidth();
+    let timer: number | undefined;
+    const measureWidth = () => setContainerWidth(Math.max(0, el.clientWidth - 64));
+    const updateWidth = () => {
+      if (timer) window.clearTimeout(timer);
+      // 280ms 防抖让面板动画期间网格保持当前列数，动画结束后一次到位
+      timer = window.setTimeout(measureWidth, 280);
+    };
+    measureWidth();
     const observer = new ResizeObserver(updateWidth);
     observer.observe(el);
-    return () => observer.disconnect();
+    return () => { observer.disconnect(); if (timer) window.clearTimeout(timer); };
   }, []);
 
+  // 等待 DOM 布局完成后同步虚拟滚动尺寸，避免最大化后行高与实际内容不匹配
   useEffect(() => {
-    virtualizer.measure();
-  }, [columnCount, rowHeight, virtualizer]);
+    const raf = requestAnimationFrame(() => virtualizer.measure());
+    return () => cancelAnimationFrame(raf);
+  }, [columnCount, cardWidth, rowHeight, virtualizer]);
 
   useEffect(() => {
     const el = parentRef.current;
@@ -86,6 +102,47 @@ export function GalleryGrid({
     const visibleRows = Math.ceil(el.clientHeight / Math.max(1, rowHeight + ROW_GAP));
     onViewportCapacityChange((visibleRows + 14) * columnCount);
   }, [columnCount, rowHeight, onViewportCapacityChange]);
+
+  useEffect(() => {
+    if (!scrollToImageId) return;
+    const imageIndex = images.findIndex(img => img.id === scrollToImageId);
+    if (imageIndex < 0) return;
+    virtualizer.scrollToIndex(Math.floor(imageIndex / columnCount), { align: 'center' });
+  }, [columnCount, images, scrollToImageId, virtualizer]);
+
+  const handleScroll = () => {
+    const el = parentRef.current;
+    if (!el || scrollRafRef.current) return;
+
+    scrollRafRef.current = window.requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      const nextTop = el.scrollTop;
+      const direction = nextTop >= lastScrollTopRef.current ? 'down' : 'up';
+      lastScrollTopRef.current = nextTop;
+
+      el.classList.add('motion-gallery-scrolling');
+      el.classList.toggle('motion-gallery-scroll-down', direction === 'down');
+      el.classList.toggle('motion-gallery-scroll-up', direction === 'up');
+
+      if (scrollEndTimerRef.current) {
+        window.clearTimeout(scrollEndTimerRef.current);
+      }
+      scrollEndTimerRef.current = window.setTimeout(() => {
+        el.classList.remove('motion-gallery-scrolling', 'motion-gallery-scroll-down', 'motion-gallery-scroll-up');
+      }, 120);
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      if (scrollEndTimerRef.current) {
+        window.clearTimeout(scrollEndTimerRef.current);
+      }
+      if (scrollRafRef.current) {
+        window.cancelAnimationFrame(scrollRafRef.current);
+      }
+    };
+  }, []);
 
   if (images.length === 0 && !loading) {
     return (
@@ -120,7 +177,8 @@ export function GalleryGrid({
   return (
     <div
       ref={parentRef}
-      className="flex-1 overflow-auto px-8 pb-8 relative"
+      className="flex-1 overflow-y-auto overflow-x-hidden px-8 pt-4 pb-8 relative motion-gallery-scroll gallery-contain"
+      onScroll={handleScroll}
     >
       <div
         className="relative w-full"
@@ -140,8 +198,8 @@ export function GalleryGrid({
                 }}
               >
                 <div
-                  className="grid px-0"
-                  style={{ gridTemplateColumns: `repeat(${columnCount}, 1fr)`, gap: GRID_GAP }}
+                  className="grid px-0 motion-gallery-row"
+                  style={{ gridTemplateColumns: `repeat(${columnCount}, ${cardWidth}px)`, gap: GRID_GAP, justifyContent: 'center' }}
                 >
                   {Array.from({ length: columnCount }).map((_, i) => (
                     <div
@@ -168,8 +226,8 @@ export function GalleryGrid({
               }}
             >
               <div
-                className="grid px-0"
-                style={{ gridTemplateColumns: `repeat(${columnCount}, 1fr)`, gap: GRID_GAP }}
+                className="grid px-0 motion-gallery-row"
+                style={{ gridTemplateColumns: `repeat(${columnCount}, ${cardWidth}px)`, gap: GRID_GAP, justifyContent: 'center' }}
               >
                 {rowImages.map(img => (
                   <ImageCard
@@ -179,6 +237,8 @@ export function GalleryGrid({
                     onClick={() => onSelect(img)}
                     onToggleFavorite={onToggleFavorite}
                     onHideImage={onHideImage}
+                    isImageHidden={isImageHidden}
+                    onUnhideImage={onUnhideImage}
                   />
                 ))}
               </div>

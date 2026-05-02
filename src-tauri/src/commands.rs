@@ -1,354 +1,16 @@
-// Tauri 命令模块：前端可调用的 IPC 命令实现
-// 包含图片导入、查询、删除、标签管理、收藏、Prompt 编辑等功能
-use crate::db::{ImageRecord, ImageStats, NewImageRecord, TagRecord};
+//! Tauri IPC 命令集合
+//!
+//! 包含图片查询、删除、标签管理、收藏、Prompt 编辑、外部服务与配置等功能。
+use crate::db::{AiAnnotation, AiTagTarget, ImageRecord, ImageStats, TagRecord};
 use crate::metadata;
-use crate::utils;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{BufReader, Read};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+use base64::Engine;
 use tauri::{AppHandle, Emitter, State};
-use walkdir::WalkDir;
-
-/// 图片导入结果统计
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ImportResult {
-    pub success: Vec<String>,
-    pub skipped: Vec<String>,
-    pub errors: Vec<String>,
-}
-
-
-#[derive(Debug, Clone)]
-struct ImportContext {
-    images_dir: PathBuf,
-    thumbnails_dir: PathBuf,
-    import_strategy: String,
-}
-
-fn empty_import_result() -> ImportResult {
-    ImportResult { success: Vec::new(), skipped: Vec::new(), errors: Vec::new() }
-}
-
-/// 使用流式读取计算文件哈希，避免为大 PNG 一次性分配完整文件内存。
-fn compute_file_hash(path: &Path) -> Result<String, String> {
-    let file = fs::File::open(path).map_err(|e| e.to_string())?;
-    let mut reader = BufReader::new(file);
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 1024 * 1024];
-    loop {
-        let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
-        if n == 0 { break; }
-        hasher.update(&buf[..n]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
-}
-
-fn prepare_import_context(import_strategy: String) -> Result<ImportContext, String> {
-    let cfg = crate::config::load_config();
-    let root = crate::config::resolve_storage_dir(&cfg);
-    let images_dir = root.join("images");
-    let thumbnails_dir = root.join("thumbnails");
-    fs::create_dir_all(&images_dir).map_err(|e| e.to_string())?;
-    fs::create_dir_all(&thumbnails_dir).map_err(|e| e.to_string())?;
-    Ok(ImportContext { images_dir, thumbnails_dir, import_strategy })
-}
-
-fn thumbnail_path_for(stored_path: &Path, thumbnails_dir: &Path) -> PathBuf {
-    let stem = stored_path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
-    thumbnails_dir.join(format!("{}_thumb.jpg", stem))
-}
-
-fn spawn_thumbnail_generation(app: AppHandle, items: Vec<(PathBuf, PathBuf)>) {
-    if items.is_empty() { return; }
-    std::thread::spawn(move || {
-        let total = items.len();
-        for (idx, (source, dest)) in items.into_iter().enumerate() {
-            if !dest.exists() {
-                if let Err(e) = utils::thumbnail::generate_thumbnail_to_path(&source, &dest, 512) {
-                    log::warn!("thumbnail generation failed for {}: {}", source.display(), e);
-                }
-            }
-            if idx + 1 == total || (idx + 1) % 10 == 0 {
-                let _ = app.emit("thumbnail-progress", serde_json::json!({
-                    "done": idx + 1,
-                    "total": total,
-                    "finished": idx + 1 == total,
-                }));
-            }
-        }
-        let _ = app.emit("thumbnails-finished", serde_json::json!({ "total": total }));
-    });
-}
-
-/// 准备单张图片导入数据：完成 hash、metadata、文件入库目录复制，但不生成缩略图、不写 DB。
-fn prepare_single_image(
-    db: &Arc<Mutex<crate::db::Database>>,
-    path: &Path,
-    result: &mut ImportResult,
-    path_str: &str,
-    ctx: &ImportContext,
-) -> Option<(NewImageRecord, PathBuf, PathBuf)> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-    if ext != "png" {
-        result.skipped.push(format!("{}: Not PNG, metadata extraction not supported", path_str));
-        return None;
-    }
-
-    let hash = match compute_file_hash(path) {
-        Ok(hash) => hash,
-        Err(e) => {
-            result.errors.push(format!("{}: {}", path_str, e));
-            return None;
-        }
-    };
-
-    if db.lock().map(|db| db.image_exists(&hash).unwrap_or(false)).unwrap_or(false) {
-        result.skipped.push(format!("{}: Already imported", path_str));
-        return None;
-    }
-
-    let meta = match metadata::parse_png_metadata(path) {
-        Ok(m) => m,
-        Err(e) => {
-            result.skipped.push(format!("{}: {}", path_str, e));
-            return None;
-        }
-    };
-    let (width, height) = if meta.width.unwrap_or(0) > 0 && meta.height.unwrap_or(0) > 0 {
-        (meta.width.unwrap_or(0), meta.height.unwrap_or(0))
-    } else {
-        metadata::get_image_dimensions(path).unwrap_or((0, 0))
-    };
-
-    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
-    let metadata_json = serde_json::to_string(&meta).unwrap_or_default();
-    let source_type = meta.source.clone();
-    let stored_filename = format!("{}.{}", hash, ext);
-    let stored_path = ctx.images_dir.join(stored_filename);
-
-    let storage_mode = if ctx.import_strategy == "hardlink_then_copy" {
-        match fs::hard_link(path, &stored_path) {
-            Ok(_) => "hardlink",
-            Err(e) => {
-                log::debug!("hardlink failed for {}: {}, falling back to copy", path_str, e);
-                if stored_path.exists() {
-                    log::debug!("stored file already exists for {}, reusing {}", path_str, stored_path.display());
-                } else if let Err(e) = fs::copy(path, &stored_path) {
-                    result.errors.push(format!("{}: Failed to copy to storage: {}", path_str, e));
-                    return None;
-                }
-                "copy"
-            }
-        }
-    } else {
-        if stored_path.exists() {
-            log::debug!("stored file already exists for {}, reusing {}", path_str, stored_path.display());
-        } else if let Err(e) = fs::copy(path, &stored_path) {
-            result.errors.push(format!("{}: Failed to copy to storage: {}", path_str, e));
-            return None;
-        }
-        "copy"
-    }.to_string();
-
-    let thumbnail_path = thumbnail_path_for(&stored_path, &ctx.thumbnails_dir);
-    let insert = NewImageRecord {
-        file_path: path_str.to_string(),
-        file_name,
-        file_hash: hash,
-        width,
-        height,
-        prompt: meta.prompt,
-        negative_prompt: meta.negative_prompt,
-        metadata_json,
-        source_type,
-        stored_path: stored_path.to_string_lossy().to_string(),
-        storage_mode,
-        thumbnail_path: thumbnail_path.to_string_lossy().to_string(),
-    };
-    Some((insert, stored_path, thumbnail_path))
-}
-
-fn import_prepared_batch(
-    db: &Arc<Mutex<crate::db::Database>>,
-    pending: &[NewImageRecord],
-    result: &mut ImportResult,
-) {
-    if pending.is_empty() { return; }
-    let db = match db.lock() {
-        Ok(db) => db,
-        Err(e) => {
-            for item in pending {
-                result.errors.push(format!("{}: {}", item.file_path, e));
-            }
-            return;
-        }
-    };
-    match db.insert_images_batch(pending) {
-        Ok(inserted) => result.success.extend(inserted),
-        Err(e) => {
-            log::error!("batch insert failed: {}", e);
-            for item in pending {
-                result.errors.push(format!("{}: {}", item.file_path, e));
-            }
-        }
-    }
-}
-
-fn should_emit_progress(idx: usize, total: usize, last_emit: &mut Instant) -> bool {
-    if idx + 1 == total || (idx + 1) % 10 == 0 || last_emit.elapsed() >= Duration::from_millis(200) {
-        *last_emit = Instant::now();
-        return true;
-    }
-    false
-}
-
-fn collect_png_files(folder_path: &str) -> Vec<String> {
-    WalkDir::new(folder_path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .filter_map(|e| {
-            let path = e.path();
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-            (ext == "png").then(|| path.to_string_lossy().to_string())
-        })
-        .collect()
-}
-
-fn import_files_batch(
-    app: &AppHandle,
-    db: &Arc<Mutex<crate::db::Database>>,
-    file_paths: Vec<String>,
-    import_strategy: Option<String>,
-) -> Result<ImportResult, String> {
-    let cfg = crate::config::load_config();
-    let strategy = import_strategy.unwrap_or(cfg.import_strategy);
-    let ctx = prepare_import_context(strategy)?;
-    let total = file_paths.len();
-    let mut result = empty_import_result();
-    let mut pending = Vec::new();
-    let mut thumbnails = Vec::new();
-    let mut last_emit = Instant::now();
-
-    let _ = app.emit("import-progress", serde_json::json!({
-        "done": 0,
-        "total": total,
-        "finished": false,
-    }));
-
-    for (idx, path_str) in file_paths.iter().enumerate() {
-        let path = Path::new(path_str);
-        if let Some((insert, stored_path, thumb_path)) = prepare_single_image(db, path, &mut result, path_str, &ctx) {
-            pending.push(insert);
-            thumbnails.push((stored_path, thumb_path));
-        }
-        if should_emit_progress(idx, total, &mut last_emit) {
-            let _ = app.emit("import-progress", serde_json::json!({
-                "done": idx + 1,
-                "total": total,
-                "finished": false,
-            }));
-        }
-    }
-
-    import_prepared_batch(db, &pending, &mut result);
-    spawn_thumbnail_generation(app.clone(), thumbnails);
-    Ok(result)
-}
-
-/// 同步导入指定文件列表中的图片
-#[tauri::command]
-pub fn import_images(
-    app: AppHandle,
-    state: State<AppState>,
-    file_paths: Vec<String>,
-) -> Result<ImportResult, String> {
-    log::info!("import_images: {} files to process", file_paths.len());
-    let result = import_files_batch(&app, &state.db, file_paths, None)?;
-    log::info!("import_images done: {} success, {} skipped, {} errors",
-        result.success.len(), result.skipped.len(), result.errors.len());
-    Ok(result)
-}
-
-/// 同步扫描文件夹，递归导入其中所有 PNG 图片
-#[tauri::command]
-pub fn import_folder(
-    app: AppHandle,
-    state: State<AppState>,
-    folder_path: String,
-) -> Result<ImportResult, String> {
-    let files = collect_png_files(&folder_path);
-    let result = import_files_batch(&app, &state.db, files, None)?;
-    log::info!("import_folder done: {} success, {} skipped, {} errors",
-        result.success.len(), result.skipped.len(), result.errors.len());
-    Ok(result)
-}
-
-/// 后台线程导入文件列表，通过事件推送进度
-#[tauri::command]
-pub fn start_import_images(
-    app: AppHandle,
-    state: State<AppState>,
-    file_paths: Vec<String>,
-    import_strategy: Option<String>,
-) -> Result<(), String> {
-    let db = state.db.clone();
-    std::thread::spawn(move || {
-        let total = file_paths.len();
-        let result = match import_files_batch(&app, &db, file_paths, import_strategy) {
-            Ok(result) => result,
-            Err(e) => ImportResult { success: Vec::new(), skipped: Vec::new(), errors: vec![e] },
-        };
-        let _ = app.emit("import-progress", serde_json::json!({
-            "done": total,
-            "total": total,
-            "finished": true,
-        }));
-        let _ = app.emit("import-finished", &result);
-        log::info!("background import_images done: {} success, {} skipped, {} errors",
-            result.success.len(), result.skipped.len(), result.errors.len());
-        if !result.errors.is_empty() {
-            log::error!("background import_images errors: {}", result.errors.join(" | "));
-        }
-    });
-    Ok(())
-}
-
-/// 后台线程扫描文件夹并导入 PNG 图片，通过事件推送进度
-#[tauri::command]
-pub fn start_import_folder(
-    app: AppHandle,
-    state: State<AppState>,
-    folder_path: String,
-    import_strategy: Option<String>,
-) -> Result<(), String> {
-    let db = state.db.clone();
-    std::thread::spawn(move || {
-        let files = collect_png_files(&folder_path);
-        let total = files.len();
-        let result = match import_files_batch(&app, &db, files, import_strategy) {
-            Ok(result) => result,
-            Err(e) => ImportResult { success: Vec::new(), skipped: Vec::new(), errors: vec![e] },
-        };
-        let _ = app.emit("import-progress", serde_json::json!({
-            "done": total,
-            "total": total,
-            "finished": true,
-        }));
-        let _ = app.emit("import-finished", &result);
-        log::info!("background import_folder done: {} success, {} skipped, {} errors",
-            result.success.len(), result.skipped.len(), result.errors.len());
-        if !result.errors.is_empty() {
-            log::error!("background import_folder errors: {}", result.errors.join(" | "));
-        }
-    });
-    Ok(())
-}
 
 /// 分页查询图片列表，支持关键词搜索
 #[tauri::command]
@@ -487,7 +149,7 @@ pub fn update_prompt(
     db.update_prompt(image_id, &positive_prompt, &negative_prompt)
 }
 
-/// 按当前图片文件重新解析 PNG 元数据，并写回数据库。
+/// 按当前图片文件重新解析元数据，并写回数据库。
 #[tauri::command]
 pub fn reparse_image_metadata(
     state: State<AppState>,
@@ -508,7 +170,7 @@ pub fn reparse_image_metadata(
         return Err(format!("Image file not found: {}", source_path));
     }
 
-    let meta = metadata::parse_png_metadata(path)?;
+    let meta = metadata::parse_image_metadata(path)?;
     let (width, height) = if meta.width.unwrap_or(0) > 0 && meta.height.unwrap_or(0) > 0 {
         (meta.width.unwrap_or(0), meta.height.unwrap_or(0))
     } else {
@@ -529,7 +191,7 @@ pub fn reparse_image_metadata(
     db.get_image_by_id(image_id)
 }
 
-/// 批量重新解析图库中的 PNG 元数据，并通过进度事件反馈。
+/// 批量重新解析图库中的图片元数据，并通过进度事件反馈。
 #[tauri::command]
 pub fn start_reparse_all_metadata(state: State<AppState>, app: AppHandle) -> Result<(), String> {
     let db_state = Arc::clone(&state.db);
@@ -588,7 +250,7 @@ pub fn start_reparse_all_metadata(state: State<AppState>, app: AppHandle) -> Res
                 continue;
             }
 
-            let meta = match metadata::parse_png_metadata(path) {
+            let meta = match metadata::parse_image_metadata(path) {
                 Ok(meta) => meta,
                 Err(e) => {
                     log::warn!("start_reparse_all_metadata parse failed for {}: {}", source_path, e);
@@ -773,6 +435,127 @@ pub fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+const AI_TAG_SERVICE: &str = "aigc-gallery";
+const AI_TAG_KEY_USER: &str = "ai-tag-api-key";
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AiTagKeyStatus { pub has_key: bool }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AiTagConfig { pub base_url: String, pub model: String }
+
+fn image_path_for_ai(target: &AiTagTarget) -> Option<String> {
+    for candidate in [target.thumbnail_path.as_deref(), target.stored_path.as_deref(), Some(target.file_path.as_str())].into_iter().flatten() {
+        if !candidate.trim().is_empty() && Path::new(candidate).exists() { return Some(candidate.to_string()); }
+    }
+    None
+}
+
+fn call_ai_tag_api(api_key: &str, cfg: &AiTagConfig, image_path: &str) -> Result<AiAnnotation, String> {
+    let bytes = fs::read(image_path).map_err(|e| e.to_string())?;
+    let lower_path = image_path.to_lowercase();
+    let mime = if lower_path.ends_with(".jpg") || lower_path.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if lower_path.ends_with(".webp") {
+        "image/webp"
+    } else {
+        "image/png"
+    };
+    let data_uri = format!("data:{};base64,{}", mime, base64::engine::general_purpose::STANDARD.encode(bytes));
+    let url = format!("{}/chat/completions", crate::config::normalize_ai_tag_base_url(&cfg.base_url));
+    log::info!("AI tag request: url={}, model={}", url, cfg.model);
+    let body = serde_json::json!({
+        "model": cfg.model,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "请根据图片内容返回严格 JSON，字段必须为 caption_zh, caption_en, tags_zh, tags_en。caption 是简短说明；tags 数组各 5-12 个，适合图库搜索。不要输出 Markdown。"},
+            {"type": "image_url", "image_url": {"url": data_uri}}
+        ]}],
+        "response_format": {"type": "json_object"},
+        "stream": false
+    });
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+        .timeout(Duration::from_secs(60)).connect_timeout(Duration::from_secs(10)).build().map_err(|e| e.to_string())?;
+    let resp = client.post(&url).bearer_auth(api_key)
+        .header("Accept", "application/json")
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .header("Content-Type", "application/json")
+        .header("Sec-Fetch-Dest", "empty")
+        .header("Sec-Fetch-Mode", "cors")
+        .header("Sec-Fetch-Site", "cross-site")
+        .json(&body).send().map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let resp_body = resp.text().unwrap_or_default();
+        log::error!("AI tag API {} -> {}: {}", url, status, resp_body);
+        return Err(format!("AI tag API error: {} — {}", status, &resp_body[..resp_body.len().min(300)]));
+    }
+    let raw: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let content = raw.pointer("/choices/0/message/content").and_then(|v| v.as_str()).ok_or_else(|| "AI response missing content".to_string())?;
+    let parsed: serde_json::Value = serde_json::from_str(content).map_err(|e| format!("AI JSON parse failed: {}", e))?;
+    let to_vec = |name: &str| -> Vec<String> { parsed.get(name).and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect()).unwrap_or_default() };
+    Ok(AiAnnotation { caption_zh: parsed.get("caption_zh").and_then(|v| v.as_str()).unwrap_or("").to_string(), caption_en: parsed.get("caption_en").and_then(|v| v.as_str()).unwrap_or("").to_string(), tags_zh: to_vec("tags_zh"), tags_en: to_vec("tags_en"), model: cfg.model.clone(), updated_at: String::new() })
+}
+
+#[tauri::command]
+pub fn get_ai_tag_key_status() -> Result<AiTagKeyStatus, String> {
+    let entry = keyring::Entry::new(AI_TAG_SERVICE, AI_TAG_KEY_USER).map_err(|e| e.to_string())?;
+    Ok(AiTagKeyStatus { has_key: entry.get_password().map(|s| !s.trim().is_empty()).unwrap_or(false) })
+}
+
+#[tauri::command]
+pub fn set_ai_tag_api_key(api_key: String) -> Result<AiTagKeyStatus, String> {
+    let entry = keyring::Entry::new(AI_TAG_SERVICE, AI_TAG_KEY_USER).map_err(|e| e.to_string())?;
+    let trimmed = api_key.trim();
+    if trimmed.is_empty() { let _ = entry.delete_credential(); return Ok(AiTagKeyStatus { has_key: false }); }
+    entry.set_password(trimmed).map_err(|e| e.to_string())?;
+    Ok(AiTagKeyStatus { has_key: true })
+}
+
+#[tauri::command]
+pub fn get_ai_tag_config() -> Result<AiTagConfig, String> {
+    let cfg = crate::config::load_config();
+    Ok(AiTagConfig { base_url: crate::config::normalize_ai_tag_base_url(&cfg.ai_tag_base_url), model: crate::config::normalize_ai_tag_model(&cfg.ai_tag_model) })
+}
+
+#[tauri::command]
+pub fn set_ai_tag_config(base_url: String, model: String) -> Result<AiTagConfig, String> {
+    let mut cfg = crate::config::load_config();
+    cfg.ai_tag_base_url = crate::config::normalize_ai_tag_base_url(&base_url);
+    cfg.ai_tag_model = crate::config::normalize_ai_tag_model(&model);
+    crate::config::save_config(&cfg)?;
+    Ok(AiTagConfig { base_url: cfg.ai_tag_base_url, model: cfg.ai_tag_model })
+}
+
+#[tauri::command]
+pub fn start_ai_tagging_missing_images(app: AppHandle, state: State<AppState>) -> Result<(), String> {
+    let entry = keyring::Entry::new(AI_TAG_SERVICE, AI_TAG_KEY_USER).map_err(|e| e.to_string())?;
+    let api_key = entry.get_password().map_err(|_| "AI tag API key not set".to_string())?;
+    let cfg0 = crate::config::load_config();
+    let cfg = AiTagConfig { base_url: crate::config::normalize_ai_tag_base_url(&cfg0.ai_tag_base_url), model: crate::config::normalize_ai_tag_model(&cfg0.ai_tag_model) };
+    let db_state = Arc::clone(&state.db);
+    std::thread::spawn(move || {
+        let targets = match db_state.lock().map_err(|e| e.to_string()).and_then(|db| db.get_images_needing_ai_annotation()) { Ok(v) => v, Err(e) => { log::error!("load ai tag targets failed: {}", e); return; } };
+        let total = targets.len();
+        if total == 0 {
+            let _ = app.emit("ai-tagging-finished", serde_json::json!({"total": 0, "success": 0, "errors": 0, "empty": true}));
+            return;
+        }
+        let mut success = 0usize; let mut errors = 0usize;
+        for (idx, target) in targets.into_iter().enumerate() {
+            let _ = app.emit("ai-tagging-progress", serde_json::json!({"done": idx, "total": total, "current": target.id, "finished": false}));
+            let result = image_path_for_ai(&target).ok_or_else(|| "image file not found".to_string()).and_then(|path| call_ai_tag_api(&api_key, &cfg, &path));
+            match result {
+                Ok(annotation) => { if db_state.lock().map_err(|e| e.to_string()).and_then(|db| db.upsert_ai_annotation(target.id, &annotation)).is_ok() { success += 1; } else { errors += 1; } }
+                Err(e) => { errors += 1; let _ = db_state.lock().map_err(|e| e.to_string()).and_then(|db| db.upsert_ai_annotation_error(target.id, &cfg.model, &e)); log::warn!("ai tag failed for {}: {}", target.id, e); }
+            }
+            let _ = app.emit("ai-tagging-progress", serde_json::json!({"done": idx + 1, "total": total, "current": target.id, "finished": idx + 1 == total}));
+        }
+        let _ = app.emit("ai-tagging-finished", serde_json::json!({"total": total, "success": success, "errors": errors}));
+    });
+    Ok(())
+}
+
 // --- 存储配置相关命令 ---
 
 /// 存储配置信息，包含用户自定义路径和最终解析路径
@@ -782,6 +565,8 @@ pub struct StorageConfig {
     pub resolved_dir: String,
     pub import_strategy: String,
     pub civitai_base_url: String,
+    pub ai_tag_base_url: String,
+    pub ai_tag_model: String,
 }
 
 /// 获取当前存储配置
@@ -796,6 +581,8 @@ pub fn get_storage_config() -> Result<StorageConfig, String> {
         resolved_dir: resolved.to_string_lossy().to_string(),
         import_strategy: cfg.import_strategy,
         civitai_base_url: crate::config::normalize_civitai_base_url(&cfg.civitai_base_url),
+        ai_tag_base_url: crate::config::normalize_ai_tag_base_url(&cfg.ai_tag_base_url),
+        ai_tag_model: crate::config::normalize_ai_tag_model(&cfg.ai_tag_model),
     })
 }
 
@@ -805,6 +592,8 @@ pub fn set_storage_dir(
     dir: Option<String>,
     import_strategy: Option<String>,
     civitai_base_url: Option<String>,
+    ai_tag_base_url: Option<String>,
+    ai_tag_model: Option<String>,
 ) -> Result<StorageConfig, String> {
     let mut cfg = crate::config::load_config();
     cfg.storage_dir = dir;
@@ -816,9 +605,14 @@ pub fn set_storage_dir(
     if let Some(base_url) = civitai_base_url {
         cfg.civitai_base_url = crate::config::normalize_civitai_base_url(&base_url);
     }
+    if let Some(base_url) = ai_tag_base_url {
+        cfg.ai_tag_base_url = crate::config::normalize_ai_tag_base_url(&base_url);
+    }
+    if let Some(model) = ai_tag_model {
+        cfg.ai_tag_model = crate::config::normalize_ai_tag_model(&model);
+    }
     crate::config::save_config(&cfg)?;
     let resolved = crate::config::resolve_storage_dir(&cfg);
-    // Ensure directories exist
     // 确保 images 和 thumbnails 子目录存在
     std::fs::create_dir_all(resolved.join("images")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(resolved.join("thumbnails")).map_err(|e| e.to_string())?;
@@ -827,6 +621,8 @@ pub fn set_storage_dir(
         resolved_dir: resolved.to_string_lossy().to_string(),
         import_strategy: cfg.import_strategy,
         civitai_base_url: crate::config::normalize_civitai_base_url(&cfg.civitai_base_url),
+        ai_tag_base_url: crate::config::normalize_ai_tag_base_url(&cfg.ai_tag_base_url),
+        ai_tag_model: crate::config::normalize_ai_tag_model(&cfg.ai_tag_model),
     })
 }
 
@@ -860,8 +656,11 @@ pub fn get_image_base64(state: State<AppState>, image_id: i64, use_thumbnail: bo
 
         let data = std::fs::read(path).map_err(|e| e.to_string())?;
         let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
-        let mime = if file_path.ends_with(".jpg") || file_path.ends_with(".jpeg") {
+        let lower_path = file_path.to_lowercase();
+        let mime = if lower_path.ends_with(".jpg") || lower_path.ends_with(".jpeg") {
             "image/jpeg"
+        } else if lower_path.ends_with(".webp") {
+            "image/webp"
         } else {
             "image/png"
         };

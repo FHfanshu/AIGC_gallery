@@ -5,7 +5,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Button, Card, Textarea } from '../ui';
-import { parseMetadata, getSourceLabel, truncate } from '../../lib/utils';
+import { cn, parseMetadata, getSourceLabel, truncate } from '../../lib/utils';
 import { api } from '../../lib/tauri';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { useI18n } from '../../i18n';
@@ -30,6 +30,8 @@ export function ImageDetail({
   const [editNegPrompt, setEditNegPrompt] = useState('');
   const [copiedField, setCopiedField] = useState<string | null>(null); // 已复制字段标识
   const [imgSrc, setImgSrc] = useState<string>(''); // 全尺寸预览图 base64
+  const [imageLoading, setImageLoading] = useState(true);
+  const [imageLoadFailed, setImageLoadFailed] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false); // 原图预览遮罩
   const [previewScale, setPreviewScale] = useState(1); // 原图预览缩放倍率
   const [previewOffset, setPreviewOffset] = useState({ x: 0, y: 0 }); // 原图预览平移偏移
@@ -47,11 +49,20 @@ export function ImageDetail({
   useEffect(() => {
     let cancelled = false;
     setImgSrc('');
+    setImageLoading(true);
+    setImageLoadFailed(false);
     api.getImageBase64(image.id, false)
-      .then(src => { if (!cancelled) setImgSrc(src); })
+      .then(src => {
+        if (!cancelled) {
+          setImgSrc(src);
+          setImageLoading(false);
+        }
+      })
       .catch(() => {
         if (!cancelled) {
           setImgSrc('');
+          setImageLoading(false);
+          setImageLoadFailed(true);
         }
       });
     return () => { cancelled = true; };
@@ -191,12 +202,12 @@ export function ImageDetail({
   ].filter(Boolean) as [string, string][];
 
   return (
-    <aside className="w-[400px] min-w-[400px] h-screen flex flex-col bg-ink-bg border-l border-ink-line overflow-y-auto motion-detail-panel-in">
+    <aside className="w-0 min-w-0 h-screen flex flex-col bg-ink-bg border-l border-ink-line overflow-y-auto motion-detail-panel-in">
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-ink-line">
         <h3 className="font-display font-bold text-sm text-ink uppercase tracking-wider">{t.detail.imageDetail}</h3>
         <div className="flex items-center gap-1">
-          <Button variant="icon" size="sm" disabled={isReparsing} onClick={handleReparseMetadata}>
+          <Button variant="icon" size="sm" disabled={isReparsing} onClick={handleReparseMetadata} title={isReparsing ? t.detail.reparsingMetadata : t.detail.reparseMetadata}>
             <svg className={isReparsing ? 'animate-spin' : ''} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="23 4 23 10 17 10" />
               <polyline points="1 20 1 14 7 14" />
@@ -204,7 +215,7 @@ export function ImageDetail({
               <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14" />
             </svg>
           </Button>
-          <Button variant="icon" size="sm" onClick={onClose}>
+          <Button variant="icon" size="sm" onClick={onClose} title={t.detail.close}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
@@ -218,19 +229,33 @@ export function ImageDetail({
         <button
           type="button"
           onClick={() => {
-            if (!imgSrc) return;
+            if (!imgSrc || imageLoading) return;
             setPreviewScale(1);
             setPreviewOffset({ x: 0, y: 0 });
             setIsPreviewOpen(true);
           }}
-          className="block w-full rounded-card overflow-hidden border border-ink-line cursor-zoom-in bg-ink-surface transition-colors duration-200 hover:border-ink-muted"
+          className={cn(
+            'block w-full rounded-card overflow-hidden border border-ink-line bg-ink-surface transition-colors duration-200',
+            imgSrc && !imageLoading ? 'cursor-zoom-in hover:border-ink-muted' : 'cursor-default'
+          )}
           title={t.detail.previewOriginal}
         >
-          <img
-            src={imgSrc}
-            alt={image.file_name}
-            className="w-full h-auto"
-          />
+          {imageLoading ? (
+            <div className="aspect-square w-full flex flex-col items-center justify-center gap-3 text-ink-muted">
+              <div className="w-6 h-6 rounded-full border-2 border-ink-line border-t-ink animate-spin" />
+              <span className="text-xs">{t.detail.imageLoading}</span>
+            </div>
+          ) : imgSrc ? (
+            <img
+              src={imgSrc}
+              alt={image.file_name}
+              className="w-full h-auto"
+            />
+          ) : (
+            <div className="aspect-square w-full flex items-center justify-center px-6 text-center text-xs text-ink-muted">
+              {imageLoadFailed ? t.detail.imageLoadFailed : t.detail.imageUnavailable}
+            </div>
+          )}
         </button>
       </div>
 
@@ -266,7 +291,7 @@ export function ImageDetail({
                     className="ml-2 text-ink underline underline-offset-2"
                     onClick={() => api.openUrl(civitaiResults[meta.model_hash]!.page_url!)}
                   >
-                    打开
+                    {t.detail.open}
                   </button>
                 )}
               </p>
@@ -301,7 +326,7 @@ export function ImageDetail({
                           className="ml-2 text-ink underline underline-offset-2"
                           onClick={() => api.openUrl(civitaiResults[lora.hash!]!.page_url!)}
                         >
-                          打开
+                          {t.detail.open}
                         </button>
                       )}
                     </p>
@@ -318,6 +343,20 @@ export function ImageDetail({
         <p className="text-xs text-ink-secondary">{image.file_name}</p>
         <p className="text-[10px] text-ink-faint tabular-nums">{image.width} x {image.height}</p>
       </div>
+
+      {image.ai_annotation && (
+        <div className="px-5 py-3 border-b border-ink-line space-y-2">
+          <label className="text-caption text-ink-muted uppercase tracking-widest block">AI Caption</label>
+          <p className="text-xs text-ink-secondary leading-relaxed">{image.ai_annotation.caption_zh || image.ai_annotation.caption_en}</p>
+          {image.ai_annotation.caption_en && <p className="text-xs text-ink-muted leading-relaxed">{image.ai_annotation.caption_en}</p>}
+          <label className="text-caption text-ink-muted uppercase tracking-widest block pt-1">AI Tags</label>
+          <div className="flex flex-wrap gap-1.5">
+            {[...image.ai_annotation.tags_zh, ...image.ai_annotation.tags_en].map(tag => (
+              <span key={tag} className="px-2 py-0.5 rounded-pill bg-ink-surface border border-ink-line text-[10px] text-ink-secondary">{tag}</span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 正向提示词（支持编辑和复制） */}
       <div className="px-5 py-3 border-b border-ink-line">
@@ -475,6 +514,7 @@ export function ImageDetail({
           variant="ghost"
           size="sm"
           onClick={() => onToggleFavorite(image.id)}
+          title={image.is_favorite ? t.detail.favorited : t.detail.favorite}
           className={image.is_favorite ? '!text-ink-danger' : ''}
         >
           <svg
@@ -495,6 +535,7 @@ export function ImageDetail({
         <Button
           variant="danger"
           size="sm"
+          title={t.detail.delete}
           onClick={() => {
             confirm(t.detail.confirmDelete).then((ok) => { if (ok) {
               onDelete(image.id);

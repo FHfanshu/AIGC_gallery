@@ -1,14 +1,14 @@
-import { useState, useEffect } from 'react'; // useState: 本地状态, useEffect: 副作用
-import { Button, Card, Input } from '../ui'; // UI组件: 按钮、卡片、输入框
+import { useState } from 'react'; // useState: 本地状态
+import { Button } from '../ui'; // UI组件: 按钮
 import { truncate } from '../../lib/utils'; // 字符串截断工具
-import { api } from '../../lib/tauri'; // Tauri IPC API封装
-import { confirm } from '@tauri-apps/plugin-dialog';
-import { useI18n } from '../../i18n'; // 国际化Hook
-import type { BackupProgress, BackupResult, CivitaiBaseUrl, ImageStats, ImportResult, ImportStrategy, StorageConfig, ViewType } from '../../types'; // 类型定义
+import { useI18n, tReplace } from '../../i18n'; // 国际化Hook
+import type { AiTagFinished, AiTagProgress, BackupProgress, BackupResult, ImageStats, ImportProgress, ImportResult, ViewType } from '../../types'; // 类型定义
+import type { SortField, SortDirection } from '../../hooks/useGallery'; // 排序类型
+import { StatusBar } from './StatusBar'; // 左下角后台任务状态
 
 /**
  * @component Sidebar
- * @description 侧边栏组件 - 提供应用导航、图片统计、导入功能、模型列表和设置面板
+ * @description 侧边栏组件 - 提供应用导航、图片统计、导入功能、过滤控制、排序、模型列表和设置面板
  */
 interface SidebarProps {
   activeView: ViewType; // 当前激活的视图
@@ -16,80 +16,56 @@ interface SidebarProps {
   stats: ImageStats | null; // 图片统计数据
   onImport: () => void; // 导入PNG回调
   onImportFolder: () => void; // 导入文件夹回调
-  importResult: ImportResult | null; // 导入结果
-  importProgress: { done: number; total: number } | null; // 后台导入进度
-  backupProgress: BackupProgress | null; // 备份导入/导出进度
-  backupResult: BackupResult | null; // 备份导入/导出结果
-  onBackupProgressReset: () => void; // 清除备份结果
+  hideNSFW: boolean;
+  onToggleNSFW: () => void;
+  nsfwTags: string[];
+  onAddNSFWTag: (tag: string) => void;
+  onRemoveNSFWTag: (tag: string) => void;
+  onRefresh: () => void;
+  isRefreshing: boolean;
+  refreshProgress?: { done: number; total: number };
+  sortBy: SortField;
+  onSortByChange: (field: SortField) => void;
+  sortDir: SortDirection;
+  onSortDirChange: (dir: SortDirection) => void;
+  importProgress: ImportProgress | null;
+  importResult: ImportResult | null;
+  reparseProgress: { done: number; total: number } | null;
+  backupProgress: BackupProgress | null;
+  backupResult: BackupResult | null;
+  aiTagProgress: AiTagProgress | null;
+  aiTagResult: AiTagFinished | null;
 }
 
 export function Sidebar({
-  activeView, onNavigate, stats, onImport, onImportFolder, importResult, importProgress,
-  backupProgress, backupResult, onBackupProgressReset,
+  activeView, onNavigate, stats, onImport, onImportFolder,
+  hideNSFW, onToggleNSFW, nsfwTags, onAddNSFWTag, onRemoveNSFWTag,
+  onRefresh, isRefreshing, refreshProgress,
+  sortBy, onSortByChange, sortDir, onSortDirChange,
+  importProgress, importResult, reparseProgress,
+  backupProgress, backupResult, aiTagProgress, aiTagResult,
 }: SidebarProps) {
-  const { t, locale, toggleLocale } = useI18n(); // t: 翻译函数, locale: 当前语言, toggleLocale: 切换语言
-  const [showSettings, setShowSettings] = useState(false); // 设置面板展开状态
-  const [storageConfig, setStorageConfig] = useState<StorageConfig | null>(null); // 存储配置
-  const [customDir, setCustomDir] = useState(''); // 自定义目录输入
-  const [importStrategy, setImportStrategy] = useState<ImportStrategy>('copy');
-  const [civitaiBaseUrl, setCivitaiBaseUrl] = useState<CivitaiBaseUrl>('https://civitai.com');
-  const [civitaiKey, setCivitaiKey] = useState('');
-  const [hasCivitaiKey, setHasCivitaiKey] = useState(false);
-  const backupPercent = backupProgress && backupProgress.total_bytes > 0
-    ? Math.min(100, Math.round((backupProgress.bytes_done / backupProgress.total_bytes) * 100))
-    : backupProgress && backupProgress.total > 0
-      ? Math.min(100, Math.round((backupProgress.done / backupProgress.total) * 100))
-      : 0;
+  const { t } = useI18n(); // t: 翻译函数
+  const [newNsfwTag, setNewNsfwTag] = useState(''); // NSFW tag input state
+  const [showNsfwTagList, setShowNsfwTagList] = useState(false);
 
-  /**
-   * 加载存储配置
-   */
-  useEffect(() => {
-    api.getStorageConfig().then(cfg => {
-      setStorageConfig(cfg);
-      setCustomDir(cfg.storage_dir || '');
-      setImportStrategy(cfg.import_strategy);
-      setCivitaiBaseUrl(cfg.civitai_base_url);
-    }).catch(() => {});
-    api.getCivitaiKeyStatus().then(status => {
-      setHasCivitaiKey(status.has_key);
-    }).catch(() => {});
-  }, []);
-
-  /**
-   * 保存自定义存储目录
-   */
-  const handleSaveStorageDir = async () => {
-    try {
-      const cfg = await api.setStorageDir(customDir.trim() || null, importStrategy, civitaiBaseUrl);
-      setStorageConfig(cfg);
-    } catch (e) {
-      console.error('Failed to save storage dir:', e);
-    }
-  };
-
-  const handleSaveCivitaiKey = async () => {
-    try {
-      const status = await api.setCivitaiApiKey(civitaiKey);
-      setHasCivitaiKey(status.has_key);
-      setCivitaiKey('');
-    } catch (e) {
-      console.error('Failed to save Civitai key:', e);
+  /** 添加NSFW标签（去重+小写化） */
+  const handleAddNsfwTag = () => {
+    const trimmed = newNsfwTag.trim().toLowerCase();
+    if (trimmed && !nsfwTags.includes(trimmed)) {
+      onAddNSFWTag(trimmed);
+      setNewNsfwTag('');
     }
   };
 
   return (
-    <aside className="w-64 min-w-[256px] h-screen flex flex-col bg-ink-bg border-r border-ink-line p-5 gap-6 overflow-y-auto">
+    <aside className="w-[280px] min-w-[280px] h-screen flex flex-col bg-ink-bg border-r border-ink-line overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-y-auto p-5 flex flex-col gap-6">
       {/* 应用标题 */}
       <div>
         <h1 className="font-display text-display-md text-ink tracking-tight">
           {t.app.title}
         </h1>
-        {stats && (
-          <div className="flex gap-4 mt-1.5 text-caption text-ink-muted uppercase tracking-widest">
-            <span>{stats.total_images} {t.gallery.images}</span>
-          </div>
-        )}
       </div>
 
       {/* 导入按钮区域 */}
@@ -100,33 +76,7 @@ export function Sidebar({
         <Button variant="secondary" size="sm" onClick={onImportFolder}>
           {t.import.importFolder}
         </Button>
-        {importProgress && (
-          <Card padding="sm" bordered className="mt-2">
-            <p className="text-sm font-medium text-ink">
-              {t.import.importing} {importProgress.total > 0 ? `${importProgress.done}/${importProgress.total}` : '...'}
-            </p>
-            {importProgress.total > 0 && (
-              <div className="mt-2.5 h-2 bg-ink-line rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-ink-success rounded-full transition-all duration-200"
-                  style={{ width: `${Math.round((importProgress.done / importProgress.total) * 100)}%` }}
-                />
-              </div>
-            )}
-          </Card>
-        )}
-        {/* 导入结果提示 */}
-        {importResult && (
-          <Card padding="sm" bordered className="mt-2">
-            <p className="text-sm font-medium text-ink">
-              {t.import.success}: <span className="text-ink-success">{importResult.success.length}</span>{' '}
-              {t.import.skipped}: {importResult.skipped.length}{' '}
-              {importResult.errors.length > 0 && (
-                <>{t.import.errors}: <span className="text-ink-danger">{importResult.errors.length}</span></>
-              )}
-            </p>
-          </Card>
-        )}
+
       </div>
 
       {/* 导航菜单 */}
@@ -145,6 +95,161 @@ export function Sidebar({
           </button>
         ))}
       </nav>
+
+      {/* ---- 过滤 section ---- */}
+      <div className="divider-h" />
+      <div className="flex flex-col gap-2">
+        <h3 className="text-caption text-ink-muted uppercase tracking-widest">{t.sidebar.filter}</h3>
+
+        {/* NSFW toggle row */}
+        <button
+          onClick={onToggleNSFW}
+          className={`flex items-center justify-between w-full px-3 py-2 text-sm rounded-btn transition-colors ${
+            hideNSFW
+              ? 'text-ink-faint hover:text-ink-muted hover:bg-ink-surface'
+              : 'text-ink-danger bg-red-50 hover:bg-red-100'
+          }`}
+        >
+          <span className="flex items-center gap-2">
+            {hideNSFW ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                <line x1="1" y1="1" x2="23" y2="23" />
+                <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            )}
+            NSFW
+          </span>
+          <span className="text-xs">{hideNSFW ? t.sidebar.nsfwHidden : t.sidebar.nsfwVisible}</span>
+        </button>
+
+        {/* NSFW 标签列表默认折叠，避免侧栏直接暴露敏感词 */}
+        <div className="rounded-btn border border-ink-line bg-ink-surface/60 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowNsfwTagList(prev => !prev)}
+              className="w-full flex items-center justify-between px-3 py-2 text-xs text-ink-secondary hover:text-ink transition-colors"
+            >
+              <span>{t.header.nsfwTags}</span>
+              <span className="inline-flex items-center gap-1 text-ink-muted">
+                {nsfwTags.length}
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  className={`transition-transform ${showNsfwTagList ? 'rotate-180' : ''}`}
+                >
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </span>
+            </button>
+            {showNsfwTagList && (
+              <div className="border-t border-ink-line motion-fade-in">
+                {nsfwTags.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto px-2.5 py-2">
+                    {nsfwTags.sort().map(tag => (
+                      <span
+                        key={tag}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-pill text-[11px] font-medium bg-red-50 text-red-600 border border-red-200"
+                      >
+                        {tag}
+                        <button
+                          onClick={() => onRemoveNSFWTag(tag)}
+                          className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-red-400 hover:text-red-700 hover:bg-red-100 transition-colors"
+                        >
+                          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* 添加标签输入（展开区域内底部） */}
+                <div className="flex gap-1.5 px-2.5 pb-2 pt-1">
+                  <input
+                    type="text"
+                    value={newNsfwTag}
+                    onChange={e => setNewNsfwTag(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleAddNsfwTag()}
+                    placeholder={t.header.addTagPlaceholder}
+                    className="flex-1 px-2 py-1.5 text-xs rounded-btn border border-ink-line bg-ink-surface text-ink placeholder-ink-faint focus-ring"
+                  />
+                  <button
+                    onClick={handleAddNsfwTag}
+                    className="px-2.5 py-1.5 text-xs rounded-btn bg-ink text-white hover:bg-ink/90 transition-colors"
+                  >
+                    {t.common.add}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+        {/* Refresh button */}
+        <button
+          onClick={onRefresh}
+          disabled={isRefreshing}
+          className={`flex items-center justify-center gap-2 w-full px-3 py-1.5 text-xs rounded-btn border border-ink-line text-ink-secondary hover:text-ink hover:border-ink-muted transition-colors ${isRefreshing ? 'cursor-wait opacity-70' : ''}`}
+        >
+          <svg className={isRefreshing ? 'animate-spin' : ''} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="23 4 23 10 17 10" />
+            <polyline points="1 20 1 14 7 14" />
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
+            <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14" />
+          </svg>
+          {isRefreshing
+            ? (refreshProgress?.total ? tReplace(t.sidebar.reparsingProgress, { done: refreshProgress.done, total: refreshProgress.total }) : t.sidebar.reparsing)
+            : t.sidebar.reparseMetadata}
+        </button>
+      </div>
+
+      {/* ---- 排序 section ---- */}
+      <div className="divider-h" />
+      <div className="flex flex-col gap-2">
+        <h3 className="text-caption text-ink-muted uppercase tracking-widest">{t.sidebar.sort}</h3>
+
+        {/* Sort field select */}
+        <select
+          value={sortBy}
+          onChange={e => onSortByChange(e.target.value as SortField)}
+          className="w-full px-3 py-2 text-xs rounded-btn border border-ink-line bg-ink-bg text-ink-secondary outline-none focus:border-ink-muted cursor-pointer"
+        >
+          <option value="created_at">{t.header.sortTime}</option>
+          <option value="file_name">{t.header.sortFileName}</option>
+          <option value="source_type">{t.header.sortSource}</option>
+          <option value="dimensions">{t.header.sortDimensions}</option>
+          <option value="aspect_ratio">{t.header.sortRatio}</option>
+          <option value="model">{t.header.sortModel}</option>
+          <option value="prompt">{t.header.sortPrompt}</option>
+        </select>
+
+        {/* Sort direction toggle */}
+        <button
+          onClick={() => onSortDirChange(sortDir === 'asc' ? 'desc' : 'asc')}
+          className="flex items-center justify-center gap-2 w-full px-3 py-2 text-xs rounded-btn border border-ink-line text-ink-secondary hover:text-ink hover:border-ink-muted transition-colors"
+        >
+          {sortDir === 'asc' ? (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" /><polyline points="19 12 12 19 5 12" />
+            </svg>
+          )}
+          {sortDir === 'asc' ? t.sidebar.sortAsc : t.sidebar.sortDesc}
+        </button>
+      </div>
 
       {/* 模型列表区域 */}
       {stats && stats.models.length > 0 && (
@@ -166,182 +271,20 @@ export function Sidebar({
         </>
       )}
 
-      <div className="flex-1" /> {/* 弹性空间，将设置推到底部 */}
-
-      {/* 设置区域 */}
-      <div className="flex flex-col gap-2">
-        <button
-          className="flex items-center gap-2 w-full px-3 py-2 text-sm text-ink-secondary hover:text-ink hover:bg-ink-surface rounded-btn transition-colors"
-          onClick={() => setShowSettings(!showSettings)}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-          </svg>
-          <span className="font-medium">{t.nav.settings}</span>
-          <svg
-            width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-            className={`ml-auto transition-transform duration-200 ${showSettings ? 'rotate-180' : ''}`}
-          >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-
-        {showSettings && storageConfig && (
-          <Card padding="sm" bordered className="space-y-3 motion-fade-in">
-            {/* 语言切换 */}
-            <div>
-              <label className="text-xs font-medium text-ink-secondary uppercase tracking-widest">{t.sidebar.language}</label>
-              <button
-                onClick={toggleLocale}
-                className="mt-1 w-full px-3 py-2 text-left text-xs rounded-btn border border-ink-line text-ink-secondary hover:text-ink hover:border-ink-muted transition-colors"
-              >
-                {locale === 'en' ? '中文' : 'English'}
-              </button>
-            </div>
-            {/* 导入策略 */}
-            <div>
-              <label className="text-xs font-medium text-ink-secondary uppercase tracking-widest">{t.sidebar.importStrategy}</label>
-              <select
-                value={importStrategy}
-                onChange={e => setImportStrategy(e.target.value as ImportStrategy)}
-                className="mt-1 w-full px-3 py-2 text-xs rounded-btn border border-ink-line bg-ink-bg text-ink-secondary outline-none focus:border-ink-muted"
-              >
-                <option value="copy">{t.sidebar.managedCopy}</option>
-                <option value="hardlink_then_copy">{t.sidebar.hardLink}</option>
-              </select>
-              <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-                {importStrategy === 'copy'
-                  ? t.sidebar.managedCopyDesc
-                  : t.sidebar.hardLinkDesc}
-              </p>
-            </div>
-            {/* Civitai API */}
-            <div>
-              <label className="text-xs font-medium text-ink-secondary uppercase tracking-widest">{t.sidebar.civitaiBaseUrl}</label>
-              <select
-                value={civitaiBaseUrl}
-                onChange={e => setCivitaiBaseUrl(e.target.value as CivitaiBaseUrl)}
-                className="mt-1 w-full px-3 py-2 text-xs rounded-btn border border-ink-line bg-ink-bg text-ink-secondary outline-none focus:border-ink-muted"
-              >
-                <option value="https://civitai.com">civitai.com</option>
-                <option value="https://civitai.green">civitai.green</option>
-                <option value="https://civitai.red">civitai.red</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-ink-secondary uppercase tracking-widest">{t.sidebar.civitaiApiKey}</label>
-              <p className="mt-1 text-xs text-ink-muted">
-                {hasCivitaiKey ? t.sidebar.apiKeyStored : t.sidebar.apiKeyStored}
-              </p>
-              <div className="flex gap-1 mt-1">
-                <Input
-                  type="password"
-                  placeholder={hasCivitaiKey ? t.sidebar.apiKeyClearHint : t.sidebar.apiKeyPlaceholder}
-                  value={civitaiKey}
-                  onChange={e => setCivitaiKey(e.target.value)}
-                  className="!py-1 !text-xs flex-1"
-                />
-                <Button size="sm" variant="secondary" onClick={handleSaveCivitaiKey}>
-                  {t.common.save}
-                </Button>
-              </div>
-            </div>
-            {/* 当前存储路径 */}
-            <div>
-              <label className="text-xs font-medium text-ink-secondary uppercase tracking-widest">{t.sidebar.storagePath}</label>
-              <p className="text-xs text-ink-secondary mt-1 break-all" title={storageConfig.resolved_dir}>
-                {storageConfig.resolved_dir}
-              </p>
-            </div>
-            {/* 自定义存储目录 */}
-            <div>
-              <label className="text-xs font-medium text-ink-secondary uppercase tracking-widest">{t.sidebar.customDir}</label>
-              <div className="flex gap-1 mt-1">
-                <Input
-                  placeholder={t.sidebar.customDirPlaceholder}
-                  value={customDir}
-                  onChange={e => setCustomDir(e.target.value)}
-                  className="!py-1 !text-xs flex-1"
-                />
-                <Button size="sm" variant="secondary" onClick={handleSaveStorageDir}>
-                  {t.sidebar.saveStorage}
-                </Button>
-              </div>
-            </div>
-            {/* 数据导入导出 */}
-            <div>
-              <label className="text-xs font-medium text-ink-secondary uppercase tracking-widest">{t.sidebar.dataBackup}</label>
-              <div className="flex gap-2 mt-2">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={!!backupProgress}
-                  onClick={async () => {
-                    try {
-                      const { save } = await import('@tauri-apps/plugin-dialog');
-                      const path = await save({
-                        defaultPath: 'aigc-gallery-backup.zip',
-                        filters: [{ name: 'ZIP', extensions: ['zip'] }],
-                      });
-                      if (!path) return;
-                      onBackupProgressReset();
-                      await api.startExportGallery(path);
-                    } catch (e) {
-                      console.error('Export failed:', e);
-                      alert(`导出失败: ${e}`);
-                    }
-                  }}
-                >
-                  {t.sidebar.exportData}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={!!backupProgress}
-                  onClick={async () => {
-                    try {
-                      const { open } = await import('@tauri-apps/plugin-dialog');
-                      const path = await open({
-                        filters: [{ name: 'ZIP', extensions: ['zip'] }],
-                        multiple: false,
-                      });
-                      if (!path) return;
-                      if (!(await confirm(t.sidebar.importConfirm))) return;
-                      onBackupProgressReset();
-                      await api.startImportGallery(path as string);
-                    } catch (e) {
-                      console.error('Import failed:', e);
-                      alert(`导入失败: ${e}`);
-                    }
-                  }}
-                >
-                  {t.sidebar.importData}
-                </Button>
-              </div>
-              {backupProgress && (
-                <div className="mt-2 rounded-btn border border-ink-line bg-ink-surface p-2">
-                  <div className="flex items-center justify-between text-xs text-ink-secondary">
-                    <span>{backupProgress.current || t.sidebar.backupWorking}</span>
-                    <span>{backupProgress.total > 0 ? `${backupProgress.done}/${backupProgress.total}` : `${backupPercent}%`}</span>
-                  </div>
-                  <div className="mt-2 h-2 bg-ink-line rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-ink-success rounded-full transition-all duration-200"
-                      style={{ width: `${backupPercent}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-              {backupResult && (
-                <div className={`mt-2 rounded-btn border p-2 text-xs ${backupResult.success ? 'border-ink-line text-ink-secondary bg-ink-surface' : 'border-red-200 text-ink-danger bg-red-50'}`}>
-                  {backupResult.message}
-                </div>
-              )}
-            </div>
-          </Card>
-        )}
+      <div className="flex-1" />
       </div>
+
+      {/* 左下角后台任务状态：常驻侧栏底部，避免挤压主内容区域 */}
+      <StatusBar
+        importProgress={importProgress}
+        importResult={importResult}
+        reparseProgress={reparseProgress}
+        isRefreshing={isRefreshing}
+        backupProgress={backupProgress}
+        backupResult={backupResult}
+        aiTagProgress={aiTagProgress}
+        aiTagResult={aiTagResult}
+      />
     </aside>
   );
 }

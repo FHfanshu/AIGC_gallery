@@ -2,9 +2,32 @@
 // 通过 @tauri-apps/api/core 的 invoke 方法实现跨进程通信
 
 import { invoke } from '@tauri-apps/api/core';
-import type { CivitaiBaseUrl, CivitaiKeyStatus, CivitaiLookupResult, ImageRecord, ImageStats, ImportResult, ImportStrategy, StorageConfig, TagRecord } from '../types';
+import type { AiTagConfig, AiTagKeyStatus, CivitaiBaseUrl, CivitaiKeyStatus, CivitaiLookupResult, ImageRecord, ImageStats, ImportResult, ImportStrategy, StorageConfig, TagRecord } from '../types';
 
 const imageBase64Cache = new Map<string, Promise<string>>();
+const thumbnailQueue: Array<() => void> = [];
+let activeThumbnailLoads = 0;
+const MAX_THUMBNAIL_LOADS = 4;
+
+function enqueueThumbnailLoad<T>(task: () => Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const run = () => {
+      activeThumbnailLoads += 1;
+      task()
+        .then(resolve, reject)
+        .finally(() => {
+          activeThumbnailLoads -= 1;
+          thumbnailQueue.shift()?.();
+        });
+    };
+
+    if (activeThumbnailLoads < MAX_THUMBNAIL_LOADS) {
+      run();
+    } else {
+      thumbnailQueue.push(run);
+    }
+  });
+}
 
 function imageBase64Key(imageId: number, useThumbnail: boolean) {
   return `${imageId}:${useThumbnail ? 'thumb' : 'full'}`;
@@ -23,7 +46,8 @@ function getCachedImageBase64(imageId: number, useThumbnail: boolean) {
     }
   }
 
-  const promise = invoke<string>('get_image_base64', { imageId, useThumbnail })
+  const load = () => invoke<string>('get_image_base64', { imageId, useThumbnail });
+  const promise = (useThumbnail ? enqueueThumbnailLoad(load) : load())
     .catch(error => {
       imageBase64Cache.delete(key);
       throw error;
@@ -103,8 +127,8 @@ export const api = {
     invoke<StorageConfig>('get_storage_config'),
 
   /** 设置自定义存储目录（传 null 恢复默认）和导入策略 */
-  setStorageDir: (dir: string | null, importStrategy?: ImportStrategy, civitaiBaseUrl?: CivitaiBaseUrl) =>
-    invoke<StorageConfig>('set_storage_dir', { dir, importStrategy: importStrategy || null, civitaiBaseUrl: civitaiBaseUrl || null }),
+  setStorageDir: (dir: string | null, importStrategy?: ImportStrategy, civitaiBaseUrl?: CivitaiBaseUrl, aiTagBaseUrl?: string, aiTagModel?: string) =>
+    invoke<StorageConfig>('set_storage_dir', { dir, importStrategy: importStrategy || null, civitaiBaseUrl: civitaiBaseUrl || null, aiTagBaseUrl: aiTagBaseUrl || null, aiTagModel: aiTagModel || null }),
 
   /** 获取图片的 Base64 编码数据，用于前端显示；同一图片请求会复用缓存/进行中的 Promise */
   getImageBase64: (imageId: number, useThumbnail = true) =>
@@ -130,6 +154,18 @@ export const api = {
   /** 使用系统默认浏览器打开受信任链接 */
   openUrl: (url: string) =>
     invoke<void>('open_url', { url }),
+
+  /** 查询/保存 AI 打标 API Key 与配置 */
+  getAiTagKeyStatus: () =>
+    invoke<AiTagKeyStatus>('get_ai_tag_key_status'),
+  setAiTagApiKey: (apiKey: string) =>
+    invoke<AiTagKeyStatus>('set_ai_tag_api_key', { apiKey }),
+  getAiTagConfig: () =>
+    invoke<AiTagConfig>('get_ai_tag_config'),
+  setAiTagConfig: (baseUrl: string, model: string) =>
+    invoke<AiTagConfig>('set_ai_tag_config', { baseUrl, model }),
+  startAiTaggingMissingImages: () =>
+    invoke<void>('start_ai_tagging_missing_images'),
 
   /** 导出图库数据到 zip 文件，返回结果描述 */
   exportGallery: (destPath: string) =>

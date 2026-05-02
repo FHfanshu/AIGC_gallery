@@ -7,9 +7,27 @@ use std::collections::HashMap;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone)]
+pub struct AiTagTarget {
+    pub id: i64,
+    pub file_path: String,
+    pub stored_path: Option<String>,
+    pub thumbnail_path: Option<String>,
+}
+
 /// 图片记录，映射到 images 表的一行。
 /// 包含文件信息、生成参数、元数据 JSON 及关联标签，
 /// 直接序列化后通过 Tauri 命令传递给前端。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AiAnnotation {
+    pub caption_zh: String,
+    pub caption_en: String,
+    pub tags_zh: Vec<String>,
+    pub tags_en: Vec<String>,
+    pub model: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ImageRecord {
     pub id: i64,
@@ -28,6 +46,7 @@ pub struct ImageRecord {
     pub thumbnail_path: Option<String>,
     pub storage_mode: String,
     pub is_favorite: bool,
+    pub ai_annotation: Option<AiAnnotation>,
 }
 
 /// 待插入的图片记录，用于批量导入时复用事务和 prepared statement。
@@ -190,6 +209,37 @@ impl Database {
             conn.execute_batch("PRAGMA user_version = 3").map_err(|e| e.to_string())?;
         }
 
+        if version < 4 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS image_ai_annotations (
+                    image_id INTEGER PRIMARY KEY,
+                    caption_zh TEXT NOT NULL DEFAULT '',
+                    caption_en TEXT NOT NULL DEFAULT '',
+                    tags_zh_json TEXT NOT NULL DEFAULT '[]',
+                    tags_en_json TEXT NOT NULL DEFAULT '[]',
+                    model TEXT NOT NULL DEFAULT '',
+                    error TEXT NOT NULL DEFAULT '',
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
+                );
+                PRAGMA user_version = 4;"
+            ).map_err(|e| e.to_string())?;
+        }
+
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS image_ai_annotations (
+                image_id INTEGER PRIMARY KEY,
+                caption_zh TEXT NOT NULL DEFAULT '',
+                caption_en TEXT NOT NULL DEFAULT '',
+                tags_zh_json TEXT NOT NULL DEFAULT '[]',
+                tags_en_json TEXT NOT NULL DEFAULT '[]',
+                model TEXT NOT NULL DEFAULT '',
+                error TEXT NOT NULL DEFAULT '',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
+            );"
+        ).map_err(|e| e.to_string())?;
+
         // 修复旧版本 FTS 触发器中 SQLite 不支持的 JSON 通配符路径，避免插入图片记录时失败。
         conn.execute_batch(
             "DROP TRIGGER IF EXISTS images_ai;
@@ -314,6 +364,7 @@ impl Database {
             storage_mode: row.get(13)?,
             is_favorite: row.get::<_, i64>(14)? != 0,
             tags: Vec::new(),
+            ai_annotation: None,
         })
     }
 
@@ -340,6 +391,42 @@ impl Database {
         for img in images.iter_mut() {
             img.tags = tag_map.remove(&img.id).unwrap_or_default();
         }
+        self.fill_batch_ai_annotations(images)?;
+        Ok(())
+    }
+
+    fn fill_batch_ai_annotations(&self, images: &mut [ImageRecord]) -> Result<(), String> {
+        if images.is_empty() { return Ok(()); }
+        let ids: Vec<i64> = images.iter().map(|i| i.id).collect();
+        let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+        let sql = format!(
+            "SELECT image_id, caption_zh, caption_en, tags_zh_json, tags_en_json, model, updated_at FROM image_ai_annotations WHERE image_id IN ({})",
+            placeholders.join(",")
+        );
+        let mut stmt = self.conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let params: Vec<Box<dyn rusqlite::types::ToSql>> = ids.iter()
+            .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            let tags_zh_json: String = row.get(3)?;
+            let tags_en_json: String = row.get(4)?;
+            Ok((row.get::<_, i64>(0)?, AiAnnotation {
+                caption_zh: row.get(1)?,
+                caption_en: row.get(2)?,
+                tags_zh: serde_json::from_str(&tags_zh_json).unwrap_or_default(),
+                tags_en: serde_json::from_str(&tags_en_json).unwrap_or_default(),
+                model: row.get(5)?,
+                updated_at: row.get(6)?,
+            }))
+        }).map_err(|e| e.to_string())?;
+        let mut annotation_map = HashMap::new();
+        for row in rows {
+            let (image_id, annotation) = row.map_err(|e| e.to_string())?;
+            annotation_map.insert(image_id, annotation);
+        }
+        for img in images.iter_mut() {
+            img.ai_annotation = annotation_map.remove(&img.id);
+        }
         Ok(())
     }
 
@@ -365,10 +452,15 @@ impl Database {
                         CASE WHEN f.image_id IS NOT NULL THEN 1 ELSE 0 END as is_favorite
                  FROM images i
                  LEFT JOIN favorites f ON i.id = f.image_id
+                 LEFT JOIN image_ai_annotations a ON i.id = a.image_id
                  WHERE i.id IN (SELECT rowid FROM images_fts WHERE images_fts MATCH ?1)
                     OR i.negative_prompt LIKE ?2
                     OR json_extract(i.metadata_json, '$.characters') LIKE ?2
                     OR json_extract(i.metadata_json, '$.model') LIKE ?2
+                    OR a.caption_zh LIKE ?2
+                    OR a.caption_en LIKE ?2
+                    OR a.tags_zh_json LIKE ?2
+                    OR a.tags_en_json LIKE ?2
                  ORDER BY i.created_at DESC, i.id DESC LIMIT ?3 OFFSET ?4"
             ).map_err(|e| e.to_string())?;
 
@@ -414,6 +506,7 @@ impl Database {
         }).map_err(|e| e.to_string())?;
 
         img.tags = self.get_image_tags(img.id)?;
+        self.fill_batch_ai_annotations(std::slice::from_mut(&mut img))?;
         Ok(img)
     }
 
@@ -530,6 +623,54 @@ impl Database {
         Ok(tags)
     }
 
+    pub fn get_images_needing_ai_annotation(&self) -> Result<Vec<AiTagTarget>, String> {
+        let mut stmt = self.conn.prepare(
+            "SELECT i.id, i.file_path, i.stored_path, i.thumbnail_path
+             FROM images i
+             LEFT JOIN image_ai_annotations a ON i.id = a.image_id
+             WHERE TRIM(COALESCE(i.prompt, '')) = ''
+               AND TRIM(COALESCE(i.negative_prompt, '')) = ''
+               AND (a.image_id IS NULL OR TRIM(COALESCE(a.error, '')) != '')
+             ORDER BY i.created_at DESC, i.id DESC"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| Ok(AiTagTarget {
+            id: row.get(0)?,
+            file_path: row.get(1)?,
+            stored_path: row.get(2)?,
+            thumbnail_path: row.get(3)?,
+        })).map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    pub fn upsert_ai_annotation(&self, image_id: i64, annotation: &AiAnnotation) -> Result<(), String> {
+        let tags_zh_json = serde_json::to_string(&annotation.tags_zh).map_err(|e| e.to_string())?;
+        let tags_en_json = serde_json::to_string(&annotation.tags_en).map_err(|e| e.to_string())?;
+        self.conn.execute(
+            "INSERT INTO image_ai_annotations (image_id, caption_zh, caption_en, tags_zh_json, tags_en_json, model, error, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, '', CURRENT_TIMESTAMP)
+             ON CONFLICT(image_id) DO UPDATE SET
+                caption_zh = excluded.caption_zh,
+                caption_en = excluded.caption_en,
+                tags_zh_json = excluded.tags_zh_json,
+                tags_en_json = excluded.tags_en_json,
+                model = excluded.model,
+                error = '',
+                updated_at = CURRENT_TIMESTAMP",
+            params![image_id, annotation.caption_zh, annotation.caption_en, tags_zh_json, tags_en_json, annotation.model],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn upsert_ai_annotation_error(&self, image_id: i64, model: &str, error: &str) -> Result<(), String> {
+        self.conn.execute(
+            "INSERT INTO image_ai_annotations (image_id, model, error, updated_at)
+             VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP)
+             ON CONFLICT(image_id) DO UPDATE SET model = excluded.model, error = excluded.error, updated_at = CURRENT_TIMESTAMP",
+            params![image_id, model, error],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub fn get_stats(&self) -> Result<ImageStats, String> {
         let total_images: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM images", [], |row| row.get(0)
@@ -615,6 +756,7 @@ impl Database {
                 storage_mode: row.get(13)?,
                 is_favorite: true,
                 tags: Vec::new(),
+                ai_annotation: None,
             })
         }).map_err(|e| e.to_string())?;
 

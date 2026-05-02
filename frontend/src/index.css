@@ -52,10 +52,28 @@
     animation: motion-shimmer 2.2s ease-in-out infinite;
   }
 
+  /* Gallery 滚动反馈只修改容器阴影，避免 React 重渲染和多行滤镜重绘 */
+  .motion-gallery-scroll {
+    transition: box-shadow 160ms ease;
+  }
+
+  .motion-gallery-scroll-down {
+    box-shadow: inset 0 -28px 36px -40px rgba(15, 23, 42, 0.24);
+  }
+
+  .motion-gallery-scroll-up {
+    box-shadow: inset 0 28px 36px -40px rgba(15, 23, 42, 0.24);
+  }
+
   /* 详情页主动效：只在自身图层上做 transform，不影响主网格布局计算 */
   .motion-detail-panel-in {
     animation: motion-detail-panel-in 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
     will-change: transform, opacity;
+  }
+
+  /* 网格容器 containment：隔离重排范围，避免面板动画期间网格重排阻塞合成 */
+  .gallery-contain {
+    contain: layout style;
   }
 }
 
@@ -75,6 +93,7 @@
 }
 
 @keyframes motion-detail-panel-in {
-  from { opacity: 0; transform: translate3d(28px, 0, 0); }
-  to { opacity: 1; transform: translate3d(0, 0, 0); }
+  from { width: 0; min-width: 0; opacity: 0; overflow: hidden; }
+  1% { opacity: 1; }
+  to   { width: 400px; min-width: 400px; opacity: 1; overflow: hidden; }
 }

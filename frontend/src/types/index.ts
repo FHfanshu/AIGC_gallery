@@ -4,6 +4,15 @@
  * 图片记录 — 对应后端数据库中的一条图片元数据
  * 包含文件路径、尺寸、提示词、标签、收藏状态等完整信息
  */
+export interface AiAnnotation {
+  caption_zh: string;
+  caption_en: string;
+  tags_zh: string[];
+  tags_en: string[];
+  model: string;
+  updated_at: string;
+}
+
 export interface ImageRecord {
   id: number;                    // 数据库主键 ID
   file_path: string;             // 原始文件路径
@@ -21,6 +30,7 @@ export interface ImageRecord {
   tags: string[];                // 关联的标签列表
   storage_mode: string;          // 存储模式：copy / hardlink
   is_favorite: boolean;          // 是否已收藏
+  ai_annotation: AiAnnotation | null; // AI 自动标注信息
 }
 
 /**
@@ -116,6 +126,14 @@ export interface ImportResult {
   errors: string[];    // 导入失败的文件列表（含错误信息）
 }
 
+export interface ImportProgress {
+  phase?: 'queued' | 'scanning' | 'processing' | 'saving' | 'finished';
+  done: number;
+  total: number;
+  current?: string | null;
+  finished?: boolean;
+}
+
 export interface BackupProgress {
   done: number;
   total: number;
@@ -136,6 +154,8 @@ export interface StorageConfig {
   resolved_dir: string;
   import_strategy: 'copy' | 'hardlink_then_copy';
   civitai_base_url: 'https://civitai.com' | 'https://civitai.green' | 'https://civitai.red';
+  ai_tag_base_url: string;
+  ai_tag_model: string;
 }
 
 export type ImportStrategy = StorageConfig['import_strategy'];
@@ -143,6 +163,29 @@ export type CivitaiBaseUrl = StorageConfig['civitai_base_url'];
 
 export interface CivitaiKeyStatus {
   has_key: boolean;
+}
+
+export interface AiTagKeyStatus {
+  has_key: boolean;
+}
+
+export interface AiTagConfig {
+  base_url: string;
+  model: string;
+}
+
+export interface AiTagProgress {
+  done: number;
+  total: number;
+  current?: number;
+  finished?: boolean;
+}
+
+export interface AiTagFinished {
+  total: number;
+  success: number;
+  errors: number;
+  empty?: boolean;
 }
 
 export interface CivitaiLookupResult {

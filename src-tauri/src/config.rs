@@ -16,6 +16,12 @@ pub struct AppConfig {
     /// Civitai API 基础域名预设
     #[serde(default = "default_civitai_base_url")]
     pub civitai_base_url: String,
+    /// OpenAI 兼容视觉接口地址，用于无 Prompt 图片打标
+    #[serde(default = "default_ai_tag_base_url")]
+    pub ai_tag_base_url: String,
+    /// 视觉打标模型 ID
+    #[serde(default = "default_ai_tag_model")]
+    pub ai_tag_model: String,
 }
 
 fn default_import_strategy() -> String {
@@ -24,6 +30,31 @@ fn default_import_strategy() -> String {
 
 pub fn default_civitai_base_url() -> String {
     "https://civitai.com".to_string()
+}
+
+pub fn default_ai_tag_base_url() -> String {
+    "https://api.openai.com/v1".to_string()
+}
+
+pub fn default_ai_tag_model() -> String {
+    "gpt-4o-mini".to_string()
+}
+
+pub fn normalize_ai_tag_base_url(base_url: &str) -> String {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return default_ai_tag_base_url();
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_string()
+    } else {
+        format!("https://{}", trimmed)
+    }
+}
+
+pub fn normalize_ai_tag_model(model: &str) -> String {
+    let trimmed = model.trim();
+    if trimmed.is_empty() { default_ai_tag_model() } else { trimmed.to_string() }
 }
 
 pub fn normalize_civitai_base_url(base_url: &str) -> String {
@@ -42,6 +73,8 @@ impl Default for AppConfig {
             storage_dir: None,
             import_strategy: default_import_strategy(),
             civitai_base_url: default_civitai_base_url(),
+            ai_tag_base_url: default_ai_tag_base_url(),
+            ai_tag_model: default_ai_tag_model(),
         }
     }
 }

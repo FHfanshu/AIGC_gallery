@@ -1,6 +1,6 @@
 [package]
 name = "aigc-gallery"
-version = "0.1.3"
+version = "0.2.0"
 edition = "2021"
 
 [lib]
@@ -18,6 +18,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 image = "0.25"
+kamadak-exif = "0.6"
 sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"

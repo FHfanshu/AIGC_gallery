@@ -2,6 +2,7 @@
 mod backup;
 mod commands;
 mod config;
+mod import_commands;
 mod db;
 mod metadata;
 mod utils;
@@ -33,8 +34,8 @@ pub fn run() {
             db: Arc::new(Mutex::new(db)),
         })
         .invoke_handler(tauri::generate_handler![
-            commands::import_images,
-            commands::import_folder,
+            import_commands::import_images,
+            import_commands::import_folder,
             commands::get_images,
             commands::get_image_detail,
             commands::delete_image,
@@ -52,12 +53,17 @@ pub fn run() {
             commands::get_storage_config,
             commands::set_storage_dir,
             commands::get_image_base64,
-            commands::start_import_images,
-            commands::start_import_folder,
+            import_commands::start_import_images,
+            import_commands::start_import_folder,
             commands::get_civitai_key_status,
             commands::set_civitai_api_key,
             commands::lookup_civitai_by_hash,
             commands::open_url,
+            commands::get_ai_tag_key_status,
+            commands::set_ai_tag_api_key,
+            commands::get_ai_tag_config,
+            commands::set_ai_tag_config,
+            commands::start_ai_tagging_missing_images,
             backup::export_gallery,
             backup::start_export_gallery,
             backup::import_gallery,

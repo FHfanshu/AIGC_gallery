@@ -128,13 +128,23 @@ export function useNSFWFilter() {
     });
   }, []);
 
-  /** 判断单张图片是否为 NSFW（宁可误伤：提示词标签与 NSFW 关键词互相包含即命中） */
+  /** 判断单张图片是否为 NSFW（按完整单词匹配，避免 "analogous" 误命中 "anal" 等子串） */
   const isNSFW = useCallback((image: PromptLikeImage): boolean => {
     const promptTags = extractPromptTags(extractPromptText(image));
     return promptTags.some(tag => {
       for (const nsfwTag of nsfwTags) {
-        if (tag === nsfwTag || tag.includes(nsfwTag) || nsfwTag.includes(tag)) {
-          return true;
+        // 精确匹配
+        if (tag === nsfwTag) return true;
+        // 整词匹配：nsfwTag 作为 tag 中的完整词出现
+        // 例如 "nsfw" 在 "nsfw content" 中命中，但在 "analogous" 中不命中 "anal"
+        if (tag.length > nsfwTag.length) {
+          const re = new RegExp('(?:^|\\s)' + nsfwTag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:\\s|$)');
+          if (re.test(tag)) return true;
+        }
+        // 反向整词匹配：tag 作为 nsfwTag 中的完整词出现
+        if (nsfwTag.length > tag.length) {
+          const re = new RegExp('(?:^|\\s)' + tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:\\s|$)');
+          if (re.test(nsfwTag)) return true;
         }
       }
       return false;
@@ -165,13 +175,13 @@ export function useNSFWFilter() {
     });
   }, []);
 
-  /** 过滤图片数组：开启 NSFW 过滤时移除匹配的图片，始终移除手动隐藏的图片 */
+  /** 过滤图片数组：开启 NSFW 过滤时移除匹配的图片和手动隐藏的图片 */
   const filterImages = useCallback(<T extends PromptLikeImage>(images: T[]): T[] => {
+    if (!hideNSFW) return images; // NSFW 模式下显示所有图片（包括手动隐藏的），允许用户切换
     return images.filter(img => {
-      // 手动隐藏的图片始终过滤
+      // 手动隐藏的图片或匹配 NSFW 标签的图片均过滤
       if (hiddenImageIds.has(img.id)) return false;
-      // 开启 NSFW 过滤时，匹配标签的图片也过滤
-      if (hideNSFW && isNSFW(img)) return false;
+      if (isNSFW(img)) return false;
       return true;
     });
   }, [hideNSFW, isNSFW, hiddenImageIds]);
