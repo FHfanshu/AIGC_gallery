@@ -3,6 +3,7 @@
 //! 负责图片记录、标签、收藏的持久化存储，以及基于 FTS5 的全文检索。
 //! 使用 user_version PRAGMA 管理 schema 迁移，确保新旧数据库平滑升级。
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -95,6 +96,65 @@ pub struct Database {
     conn: Connection,
 }
 
+/// 文件名自然排序：保持前端 numeric 排序语义，避免分页排序迁移到 SQL 后 10 排在 2 前面。
+fn natural_file_name_cmp(left: &str, right: &str) -> Ordering {
+    let left_chars: Vec<char> = left.chars().collect();
+    let right_chars: Vec<char> = right.chars().collect();
+    let mut left_index = 0;
+    let mut right_index = 0;
+
+    while left_index < left_chars.len() && right_index < right_chars.len() {
+        let left_is_digit = left_chars[left_index].is_ascii_digit();
+        let right_is_digit = right_chars[right_index].is_ascii_digit();
+
+        if left_is_digit && right_is_digit {
+            let left_start = left_index;
+            let right_start = right_index;
+            while left_index < left_chars.len() && left_chars[left_index].is_ascii_digit() {
+                left_index += 1;
+            }
+            while right_index < right_chars.len() && right_chars[right_index].is_ascii_digit() {
+                right_index += 1;
+            }
+
+            let left_digits: String = left_chars[left_start..left_index].iter().collect();
+            let right_digits: String = right_chars[right_start..right_index].iter().collect();
+            let left_significant = left_digits.trim_start_matches('0');
+            let right_significant = right_digits.trim_start_matches('0');
+            let left_number = if left_significant.is_empty() { "0" } else { left_significant };
+            let right_number = if right_significant.is_empty() { "0" } else { right_significant };
+
+            let number_order = left_number
+                .len()
+                .cmp(&right_number.len())
+                .then_with(|| left_number.cmp(right_number))
+                .then_with(|| left_digits.len().cmp(&right_digits.len()));
+            if number_order != Ordering::Equal {
+                return number_order;
+            }
+            continue;
+        }
+
+        let left_start = left_index;
+        let right_start = right_index;
+        while left_index < left_chars.len() && !left_chars[left_index].is_ascii_digit() {
+            left_index += 1;
+        }
+        while right_index < right_chars.len() && !right_chars[right_index].is_ascii_digit() {
+            right_index += 1;
+        }
+
+        let left_text: String = left_chars[left_start..left_index].iter().collect::<String>().to_lowercase();
+        let right_text: String = right_chars[right_start..right_index].iter().collect::<String>().to_lowercase();
+        let text_order = left_text.cmp(&right_text);
+        if text_order != Ordering::Equal {
+            return text_order;
+        }
+    }
+
+    left_chars.len().cmp(&right_chars.len())
+}
+
 impl Database {
     pub fn new() -> Result<Self, String> {
         let db_path = crate::utils::paths::db_path();
@@ -102,6 +162,8 @@ impl Database {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
+        conn.create_collation("AIGC_NATURAL", natural_file_name_cmp)
+            .map_err(|e| e.to_string())?;
 
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS images (
@@ -441,11 +503,27 @@ impl Database {
             .join(" OR ")
     }
 
-    pub fn get_images(&self, offset: i64, limit: i64, search: Option<&str>) -> Result<Vec<ImageRecord>, String> {
+    /// 根据前端白名单排序字段生成 ORDER BY，避免分页时前端只排序局部数据。
+    fn image_order_clause(sort_by: &str, sort_dir: &str) -> String {
+        let dir = if sort_dir.eq_ignore_ascii_case("asc") { "ASC" } else { "DESC" };
+        let expr = match sort_by {
+            "file_name" => "i.file_name COLLATE AIGC_NATURAL",
+            "source_type" => "i.source_type COLLATE NOCASE",
+            "dimensions" => "(i.width * i.height)",
+            "aspect_ratio" => "CASE WHEN i.height > 0 THEN CAST(i.width AS REAL) / i.height ELSE 0 END",
+            "model" => "COALESCE(json_extract(i.metadata_json, '$.model'), '') COLLATE NOCASE",
+            "prompt" => "i.prompt COLLATE NOCASE",
+            _ => "i.created_at",
+        };
+        format!("ORDER BY {} {}, i.id {}", expr, dir, dir)
+    }
+
+    pub fn get_images(&self, offset: i64, limit: i64, search: Option<&str>, sort_by: &str, sort_dir: &str) -> Result<Vec<ImageRecord>, String> {
+        let order_clause = Self::image_order_clause(sort_by, sort_dir);
         if let Some(q) = search {
             let fts_query = Self::build_fts_query(q);
             let pattern = format!("%{}%", q);
-            let mut stmt = self.conn.prepare(
+            let sql = format!(
                 "SELECT i.id, i.file_path, i.file_name, i.file_hash, i.width, i.height,
                         i.prompt, i.negative_prompt, i.metadata_json, i.created_at,
                         i.source_type, i.stored_path, i.thumbnail_path, i.storage_mode,
@@ -461,8 +539,10 @@ impl Database {
                     OR a.caption_en LIKE ?2
                     OR a.tags_zh_json LIKE ?2
                     OR a.tags_en_json LIKE ?2
-                 ORDER BY i.created_at DESC, i.id DESC LIMIT ?3 OFFSET ?4"
-            ).map_err(|e| e.to_string())?;
+                 {} LIMIT ?3 OFFSET ?4",
+                order_clause
+            );
+            let mut stmt = self.conn.prepare(&sql).map_err(|e| e.to_string())?;
 
             let rows = stmt.query_map(params![fts_query, pattern, limit, offset], |row| {
                 Self::row_to_image(row)
@@ -472,15 +552,17 @@ impl Database {
             return Ok(images);
         }
 
-        let mut stmt = self.conn.prepare(
+        let sql = format!(
             "SELECT i.id, i.file_path, i.file_name, i.file_hash, i.width, i.height,
                     i.prompt, i.negative_prompt, i.metadata_json, i.created_at,
                     i.source_type, i.stored_path, i.thumbnail_path, i.storage_mode,
                     CASE WHEN f.image_id IS NOT NULL THEN 1 ELSE 0 END as is_favorite
              FROM images i
              LEFT JOIN favorites f ON i.id = f.image_id
-             ORDER BY i.created_at DESC, i.id DESC LIMIT ?1 OFFSET ?2"
-        ).map_err(|e| e.to_string())?;
+             {} LIMIT ?1 OFFSET ?2",
+            order_clause
+        );
+        let mut stmt = self.conn.prepare(&sql).map_err(|e| e.to_string())?;
 
         let rows = stmt.query_map(params![limit, offset], |row| {
             Self::row_to_image(row)

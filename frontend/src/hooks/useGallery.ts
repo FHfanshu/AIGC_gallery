@@ -1,8 +1,7 @@
 // 图库核心 Hook — 管理图片列表的加载、搜索、分页、排序和删除逻辑
 
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { api } from '../lib/tauri';
-import { parseMetadata } from '../lib/utils';
 import type { ImageRecord } from '../types';
 
 /** 排序字段类型 */
@@ -57,7 +56,7 @@ export function useGallery() {
       const pageLimit = limit;
       const off = reset ? 0 : offsetRef.current;  // 重置时从偏移量 0 开始
       const sq = searchQueryRef.current;           // 使用 ref 保证拿到最新搜索词
-      const imgs = await api.getImages(off, pageLimit, sq);
+      const imgs = await api.getImages(off, pageLimit, sq, sortBy, sortDir);
 
       // 如果重置请求期间又发起了新的重置，旧响应直接丢弃，避免覆盖新列表。
       if (reset && token !== resetTokenRef.current) return;
@@ -77,7 +76,7 @@ export function useGallery() {
       if (!reset) appendLoadingRef.current = false;
       setLoading(false);
     }
-  }, [limit, uniqueImagesById]);
+  }, [limit, sortBy, sortDir, uniqueImagesById]);
 
   // 防抖处理搜索请求，避免输入时频繁调用接口
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
@@ -122,47 +121,8 @@ export function useGallery() {
     debouncedLoadImages(true);
   }, [limit, debouncedLoadImages]);
 
-  /** 根据当前排序字段和方向对已加载图片排序 */
-  const sortedImages = useMemo(() => {
-    const sorted = [...images];
-    sorted.sort((a, b) => {
-      let cmp = 0;
-      switch (sortBy) {
-        case 'created_at':
-          cmp = (a.created_at || '').localeCompare(b.created_at || '');
-          break;
-        case 'file_name':
-          cmp = a.file_name.localeCompare(b.file_name, undefined, { numeric: true });
-          break;
-        case 'source_type':
-          cmp = (a.source_type || '').localeCompare(b.source_type || '');
-          break;
-        case 'dimensions':
-          cmp = (a.width * a.height) - (b.width * b.height);
-          break;
-        case 'aspect_ratio': {
-          const ra = a.height > 0 ? a.width / a.height : 0;
-          const rb = b.height > 0 ? b.width / b.height : 0;
-          cmp = ra - rb;
-          break;
-        }
-        case 'model': {
-          const ma = parseMetadata(a.metadata_json)?.model || '';
-          const mb = parseMetadata(b.metadata_json)?.model || '';
-          cmp = ma.localeCompare(mb);
-          break;
-        }
-        case 'prompt':
-          cmp = (a.prompt || '').localeCompare(b.prompt || '');
-          break;
-      }
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-    return sorted;
-  }, [images, sortBy, sortDir]);
-
   return {
-    images: sortedImages, loading, error, searchQuery, setSearchQuery,
+    images, loading, error, searchQuery, setSearchQuery,
     hasMore, loadImages, loadMore, refresh, deleteImage, setImages,
     sortBy, setSortBy, sortDir, setSortDir, setLoadLimit,
   };

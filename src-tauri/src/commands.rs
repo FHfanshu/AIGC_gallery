@@ -19,15 +19,19 @@ pub fn get_images(
     offset: Option<i64>,
     limit: Option<i64>,
     search: Option<String>,
+    sort_by: Option<String>,
+    sort_dir: Option<String>,
 ) -> Result<Vec<ImageRecord>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let imgs = db.get_images(
         offset.unwrap_or(0),
         limit.unwrap_or(50),
         search.as_deref(),
+        sort_by.as_deref().unwrap_or("created_at"),
+        sort_dir.as_deref().unwrap_or("desc"),
     )?;
-    log::debug!("get_images: offset={:?} limit={:?} search={:?} -> {} results",
-        offset, limit, search, imgs.len());
+    log::debug!("get_images: offset={:?} limit={:?} search={:?} sort_by={:?} sort_dir={:?} -> {} results",
+        offset, limit, search, sort_by, sort_dir, imgs.len());
     Ok(imgs)
 }
 

@@ -64,8 +64,8 @@ function getCachedImageBase64(imageId: number, useThumbnail: boolean) {
 /** api — 所有 Tauri IPC 调用的统一入口对象 */
 export const api = {
   /** 分页获取图片列表，支持关键词搜索 */
-  getImages: (offset = 0, limit = 50, search?: string | null) =>
-    invoke<ImageRecord[]>('get_images', { offset, limit, search: search || null }),
+  getImages: (offset = 0, limit = 50, search?: string | null, sortBy = 'created_at', sortDir = 'desc') =>
+    invoke<ImageRecord[]>('get_images', { offset, limit, search: search || null, sortBy, sortDir }),
   
   /** 获取单张图片的详细信息 */
   getImageDetail: (id: number) =>

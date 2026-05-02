@@ -24,6 +24,12 @@ const DENSITY_CARD_WIDTH: Record<GalleryDensity, number> = {
   large: 180,
 };
 
+interface ScrollAnchor {
+  imageIndex: number;
+  rowOffset: number;
+  rowSize: number;
+}
+
 interface GalleryGridProps {
   images: ImageRecord[];
   loading: boolean;
@@ -53,6 +59,9 @@ export function GalleryGrid({
   const lastScrollTopRef = useRef(0);
   const scrollEndTimerRef = useRef<number | null>(null);
   const scrollRafRef = useRef<number | null>(null);
+  const pendingAnchorRef = useRef<ScrollAnchor | null>(null);
+  const containerWidthRef = useRef(containerWidth);
+  const layoutRef = useRef({ columnCount: 1, rowSize: 1 });
 
   // 根据容器宽度计算列数，卡片宽度自适应撑满
   const { columnCount, cardWidth } = useMemo(() => {
@@ -64,15 +73,35 @@ export function GalleryGrid({
   }, [containerWidth, density]);
 
   const rowHeight = cardWidth + CARD_CAPTION_HEIGHT;
+  const rowSize = rowHeight + ROW_GAP;
   const rows = Math.ceil(images.length / columnCount); // 总行数
+
+  useLayoutEffect(() => {
+    containerWidthRef.current = containerWidth;
+    layoutRef.current = { columnCount, rowSize };
+  }, [columnCount, containerWidth, rowSize]);
 
   // 虚拟滚动实例
   const virtualizer = useVirtualizer({
     count: hasMore ? rows + 1 : rows, // 有更多数据时多一行用于触发加载
     getScrollElement: () => parentRef.current,
-    estimateSize: () => rowHeight + ROW_GAP,
+    estimateSize: () => rowSize,
     overscan: 6, // 提前预渲染更多行，让缩略图有时间在进入视口前完成加载
   });
+
+  /** 容器宽度变化前记录顶部图片，而不是记录行号；列数变化后同一行号会指向不同图片。 */
+  const captureScrollAnchor = () => {
+    const el = parentRef.current;
+    if (!el || images.length === 0) return;
+    const layout = layoutRef.current;
+    const currentRow = Math.max(0, Math.floor(el.scrollTop / Math.max(1, layout.rowSize)));
+    const imageIndex = Math.min(images.length - 1, currentRow * layout.columnCount);
+    pendingAnchorRef.current = {
+      imageIndex,
+      rowOffset: Math.max(0, el.scrollTop - currentRow * layout.rowSize),
+      rowSize: layout.rowSize,
+    };
+  };
 
   // 滚动触底检测：倒数第二行出现时触发加载更多
   useEffect(() => {
@@ -84,8 +113,9 @@ export function GalleryGrid({
     }
   }, [virtualizer.getVirtualItems(), rows, hasMore, loading, onLoadMore]);
 
-  // 详情面板开关或窗口缩放会改变网格宽度，虚拟滚动必须同步重算行高
-  // ResizeObserver 监听容器宽度变化，防抖跨过面板动画避免列数跳变
+  // 详情面板开关或窗口缩放会改变网格宽度，虚拟滚动必须同步重算行高。
+  // useLayoutEffect 中同步测量宽度，确保在浏览器绘制前拿到正确尺寸，
+  // 避免详情面板打开时虚拟滚动使用过期的容器宽度导致图片被"吞掉"。
   useLayoutEffect(() => {
     const el = parentRef.current;
     if (!el) return;
@@ -93,9 +123,16 @@ export function GalleryGrid({
     let raf: number | undefined;
     const measureWidth = () => {
       const nextWidth = Math.max(0, el.clientWidth - GRID_HORIZONTAL_PADDING);
-      setContainerWidth(prev => (Math.abs(prev - nextWidth) > 1 ? nextWidth : prev));
+      if (Math.abs(containerWidthRef.current - nextWidth) > 1) {
+        captureScrollAnchor();
+        containerWidthRef.current = nextWidth;
+        setContainerWidth(nextWidth);
+      }
       return nextWidth;
     };
+    // 同步测量：useLayoutEffect 在 DOM 突变后、绘制前执行，
+    // 此时 el.clientWidth 已反映详情面板打开/关闭后的真实宽度。
+    measureWidth();
     const updateWidth = () => {
       if (raf) window.cancelAnimationFrame(raf);
       raf = window.requestAnimationFrame(() => {
@@ -115,20 +152,28 @@ export function GalleryGrid({
       if (raf) window.cancelAnimationFrame(raf);
       if (timer) window.clearTimeout(timer);
     };
-  }, [selectedId]);
+  }, [images.length, selectedId]);
 
-  // 等待 DOM 布局完成后同步虚拟滚动尺寸，避免最大化后行高与实际内容不匹配
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => virtualizer.measure());
-    return () => cancelAnimationFrame(raf);
-  }, [columnCount, cardWidth, rowHeight, virtualizer]);
+  // 列数变化后：用之前记录的顶部图片索引计算新行号，避免 4 列变 2 列时同一像素偏移映射到错误图片。
+  useLayoutEffect(() => {
+    virtualizer.measure();
+    const anchor = pendingAnchorRef.current;
+    if (!anchor || images.length === 0) return;
+
+    pendingAnchorRef.current = null;
+    const clampedImageIndex = Math.min(anchor.imageIndex, images.length - 1);
+    const nextRow = Math.floor(clampedImageIndex / columnCount);
+    const offsetRatio = anchor.rowOffset / Math.max(1, anchor.rowSize);
+    const nextOffset = nextRow * rowSize + Math.min(rowSize - 1, offsetRatio * rowSize);
+    virtualizer.scrollToOffset(nextOffset, { behavior: 'auto' });
+  }, [columnCount, images.length, rowSize, virtualizer]);
 
   useEffect(() => {
     const el = parentRef.current;
     if (!el || !onViewportCapacityChange) return;
-    const visibleRows = Math.ceil(el.clientHeight / Math.max(1, rowHeight + ROW_GAP));
+    const visibleRows = Math.ceil(el.clientHeight / Math.max(1, rowSize));
     onViewportCapacityChange((visibleRows + 14) * columnCount);
-  }, [columnCount, rowHeight, onViewportCapacityChange]);
+  }, [columnCount, rowSize, onViewportCapacityChange]);
 
   useEffect(() => {
     if (!scrollToImageId) return;
