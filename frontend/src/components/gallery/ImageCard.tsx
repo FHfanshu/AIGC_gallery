@@ -38,19 +38,9 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
     const loadImage = () => {
       if (started || cancelled) return;
       started = true;
-      api.getImageBase64(image.id, true)
-        .then(src => {
-          if (!cancelled) {
-            setImgSrc(src);
-            setLoaded(true);
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setImgSrc('');
-            setLoaded(true);
-          }
-        });
+      const src = api.getThumbnailSrc(image);
+      setImgSrc(src);
+      setLoaded(true);
     };
 
     const observer = new IntersectionObserver(entries => {
@@ -90,8 +80,15 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
             src={imgSrc}
             alt={image.file_name}
             className="w-full h-full object-cover object-top motion-media-in transition-transform duration-500 group-hover:scale-[1.02]"
-            onError={e => {
-              (e.target as HTMLImageElement).style.display = 'none'; // 加载失败时隐藏
+            onLoad={() => setLoaded(true)}
+            onError={() => {
+              const fallback = api.getStoredImageSrc(image);
+              if (fallback && fallback !== imgSrc) {
+                setImgSrc(fallback);
+              } else {
+                setLoaded(true);
+                setImgSrc('');
+              }
             }}
           />
         ) : null}

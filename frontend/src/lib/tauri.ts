@@ -1,7 +1,7 @@
 // Tauri IPC API 封装层 — 统一封装前端调用后端 Rust 命令的所有接口
 // 通过 @tauri-apps/api/core 的 invoke 方法实现跨进程通信
 
-import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import type { AiTagConfig, AiTagKeyStatus, CivitaiBaseUrl, CivitaiKeyStatus, CivitaiLookupResult, ImageRecord, ImageStats, ImportResult, ImportStrategy, StorageConfig, TagRecord } from '../types';
 
 const imageBase64Cache = new Map<string, Promise<string>>();
@@ -31,6 +31,11 @@ function enqueueThumbnailLoad<T>(task: () => Promise<T>): Promise<T> {
 
 function imageBase64Key(imageId: number, useThumbnail: boolean) {
   return `${imageId}:${useThumbnail ? 'thumb' : 'full'}`;
+}
+
+function toAssetSrc(path?: string | null) {
+  const normalized = path?.trim();
+  return normalized ? convertFileSrc(normalized) : '';
 }
 
 function getCachedImageBase64(imageId: number, useThumbnail: boolean) {
@@ -129,6 +134,14 @@ export const api = {
   /** 设置自定义存储目录（传 null 恢复默认）和导入策略 */
   setStorageDir: (dir: string | null, importStrategy?: ImportStrategy, civitaiBaseUrl?: CivitaiBaseUrl, aiTagBaseUrl?: string, aiTagModel?: string) =>
     invoke<StorageConfig>('set_storage_dir', { dir, importStrategy: importStrategy || null, civitaiBaseUrl: civitaiBaseUrl || null, aiTagBaseUrl: aiTagBaseUrl || null, aiTagModel: aiTagModel || null }),
+
+  /** 从已入库路径生成 Tauri asset URL，缩略图优先，避免缩略图网格走 Base64 IPC。 */
+  getThumbnailSrc: (image: ImageRecord) =>
+    toAssetSrc(image.thumbnail_path || image.stored_path || image.file_path),
+
+  /** 从已入库原图路径生成 Tauri asset URL，作为缩略图缺失时的轻量回退。 */
+  getStoredImageSrc: (image: ImageRecord) =>
+    toAssetSrc(image.stored_path || image.file_path),
 
   /** 获取图片的 Base64 编码数据，用于前端显示；同一图片请求会复用缓存/进行中的 Promise */
   getImageBase64: (imageId: number, useThumbnail = true) =>
