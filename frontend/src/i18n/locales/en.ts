@@ -115,6 +115,7 @@ export const en = {
     reparsing: 'Reparsing...',
     reparsingProgress: 'Reparsing {done}/{total}',
     sort: 'Sort',
+    gridSize: 'Grid Size',
     gridSmall: 'Small',
     gridMedium: 'Medium',
     gridLarge: 'Large',

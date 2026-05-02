@@ -202,7 +202,7 @@ export function ImageDetail({
   ].filter(Boolean) as [string, string][];
 
   return (
-    <aside className="w-0 min-w-0 h-screen flex flex-col bg-ink-bg border-l border-ink-line overflow-y-auto motion-detail-panel-in">
+    <aside className="w-[400px] min-w-[400px] h-screen flex flex-col bg-ink-bg border-l border-ink-line overflow-y-auto">
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-ink-line">
         <h3 className="font-display font-bold text-sm text-ink uppercase tracking-wider">{t.detail.imageDetail}</h3>

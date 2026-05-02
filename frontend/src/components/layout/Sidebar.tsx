@@ -220,7 +220,7 @@ export function Sidebar({
       {/* ---- 排序 section ---- */}
       <div className="divider-h" />
       <div className="flex flex-col gap-2">
-        <h3 className="text-caption text-ink-muted uppercase tracking-widest">{t.sidebar.sort}</h3>
+        <h3 className="text-caption text-ink-muted uppercase tracking-widest">{t.sidebar.gridSize}</h3>
 
         {/* 网格密度：默认中等大约一屏四行，小/大用于快速切换可视信息量 */}
         <div className="grid grid-cols-3 gap-1 rounded-btn border border-ink-line bg-ink-surface/60 p-1">
@@ -239,6 +239,8 @@ export function Sidebar({
             </button>
           ))}
         </div>
+
+        <h3 className="mt-3 text-caption text-ink-muted uppercase tracking-widest">{t.sidebar.sort}</h3>
 
         {/* Sort field select */}
         <select

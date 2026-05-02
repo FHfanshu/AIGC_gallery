@@ -116,6 +116,7 @@ export const zh: Translations = {
     reparsing: '刷新中...',
     reparsingProgress: '刷新中 {done}/{total}',
     sort: '排序',
+    gridSize: '网格大小',
     gridSmall: '小',
     gridMedium: '中',
     gridLarge: '大',

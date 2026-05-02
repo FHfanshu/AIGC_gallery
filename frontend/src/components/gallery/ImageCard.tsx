@@ -61,7 +61,7 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
     <div
       ref={cardRef}
       className={cn(
-        'rounded-card bg-ink-bg transition-all duration-150 cursor-pointer overflow-hidden group border',
+        'rounded-card bg-ink-bg transition-colors duration-150 cursor-pointer overflow-hidden group border',
         selected
           ? 'border-ink ring-1 ring-ink'
           : 'border-ink-line hover:border-ink-muted'
@@ -79,7 +79,7 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
           <img
             src={imgSrc}
             alt={image.file_name}
-            className="w-full h-full object-cover object-top motion-media-in transition-transform duration-500 group-hover:scale-[1.02]"
+            className="w-full h-full object-cover object-top motion-media-in"
             onLoad={() => setLoaded(true)}
             onError={() => {
               const fallback = api.getStoredImageSrc(image);
@@ -110,7 +110,7 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
               onToggleFavorite(image.id);
             }}
             className={cn(
-              'w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200 ease-out active:brightness-90',
+              'w-7 h-7 rounded-full flex items-center justify-center transition-colors duration-150 active:brightness-90',
               'bg-white/90 backdrop-blur-sm hover:bg-white hover:shadow-sm',
               image.is_favorite && '!opacity-100'
             )}
@@ -141,7 +141,7 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
                 }
               }}
               title={isImageHidden?.(image.id) ? t.header.unhideImage : t.header.markAsNSFW}
-              className="w-7 h-7 rounded-full flex items-center justify-center bg-white/90 backdrop-blur-sm hover:bg-red-50 hover:shadow-sm active:brightness-90 transition-all duration-200 ease-out"
+              className="w-7 h-7 rounded-full flex items-center justify-center bg-white/90 backdrop-blur-sm hover:bg-red-50 hover:shadow-sm active:brightness-90 transition-colors duration-150"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A8A8A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />

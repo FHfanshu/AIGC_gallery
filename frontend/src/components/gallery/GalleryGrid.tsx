@@ -11,8 +11,10 @@ import type { ImageRecord } from '../../types';
 
 // 卡片最小宽度（决定列数），实际宽度根据容器自动撑满
 const GRID_GAP = 16;
+const GRID_HORIZONTAL_PADDING = 64;
 const CARD_CAPTION_HEIGHT = 52;
 const ROW_GAP = 16;
+const SIDEBAR_WIDTH = 280;
 
 export type GalleryDensity = 'small' | 'medium' | 'large';
 
@@ -44,7 +46,10 @@ export function GalleryGrid({
 }: GalleryGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const { t } = useI18n();
-  const [containerWidth, setContainerWidth] = useState(0);
+  const [containerWidth, setContainerWidth] = useState(() => {
+    if (typeof window === 'undefined') return 0;
+    return Math.max(0, window.innerWidth - SIDEBAR_WIDTH - GRID_HORIZONTAL_PADDING);
+  });
   const lastScrollTopRef = useRef(0);
   const scrollEndTimerRef = useRef<number | null>(null);
   const scrollRafRef = useRef<number | null>(null);
@@ -85,18 +90,32 @@ export function GalleryGrid({
     const el = parentRef.current;
     if (!el) return;
     let timer: number | undefined;
-    const measureWidth = () => setContainerWidth(Math.max(0, el.clientWidth - 64));
+    let raf: number | undefined;
+    const measureWidth = () => {
+      const nextWidth = Math.max(0, el.clientWidth - GRID_HORIZONTAL_PADDING);
+      setContainerWidth(prev => (Math.abs(prev - nextWidth) > 1 ? nextWidth : prev));
+      return nextWidth;
+    };
     const updateWidth = () => {
-      measureWidth();
-      if (timer) window.clearTimeout(timer);
-      // 面板动画结束后再测一次，避免列数在动画中间停在错误宽度。
-      timer = window.setTimeout(measureWidth, 280);
+      if (raf) window.cancelAnimationFrame(raf);
+      raf = window.requestAnimationFrame(() => {
+        const nextWidth = measureWidth();
+        if (timer) window.clearTimeout(timer);
+        // 启动早期 WebView 可能先给出 0 宽度，下一帧再补测一次避免首屏卡成单列。
+        timer = window.setTimeout(measureWidth, nextWidth > 0 ? 120 : 16);
+      });
     };
     updateWidth();
     const observer = new ResizeObserver(updateWidth);
     observer.observe(el);
-    return () => { observer.disconnect(); if (timer) window.clearTimeout(timer); };
-  }, []);
+    window.addEventListener('resize', updateWidth);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateWidth);
+      if (raf) window.cancelAnimationFrame(raf);
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [selectedId]);
 
   // 等待 DOM 布局完成后同步虚拟滚动尺寸，避免最大化后行高与实际内容不匹配
   useEffect(() => {
@@ -128,7 +147,6 @@ export function GalleryGrid({
       const direction = nextTop >= lastScrollTopRef.current ? 'down' : 'up';
       lastScrollTopRef.current = nextTop;
 
-      el.classList.add('motion-gallery-scrolling');
       el.classList.toggle('motion-gallery-scroll-down', direction === 'down');
       el.classList.toggle('motion-gallery-scroll-up', direction === 'up');
 
@@ -136,7 +154,7 @@ export function GalleryGrid({
         window.clearTimeout(scrollEndTimerRef.current);
       }
       scrollEndTimerRef.current = window.setTimeout(() => {
-        el.classList.remove('motion-gallery-scrolling', 'motion-gallery-scroll-down', 'motion-gallery-scroll-up');
+        el.classList.remove('motion-gallery-scroll-down', 'motion-gallery-scroll-up');
       }, 120);
     });
   };
@@ -185,11 +203,11 @@ export function GalleryGrid({
   return (
     <div
       ref={parentRef}
-      className="flex-1 overflow-y-auto overflow-x-hidden px-8 pt-4 pb-8 relative motion-gallery-scroll gallery-contain"
+      className="flex-1 overflow-y-auto overflow-x-hidden pt-4 pb-8 relative motion-gallery-scroll gallery-contain"
       onScroll={handleScroll}
     >
       <div
-        className="relative w-full"
+        className="relative w-full px-8"
         style={{ height: virtualizer.getTotalSize() }}
       >
         {virtualizer.getVirtualItems().map(virtualRow => {
@@ -206,7 +224,7 @@ export function GalleryGrid({
                 }}
               >
                 <div
-                  className="grid px-0 motion-gallery-row"
+                  className="grid px-0"
                   style={{ gridTemplateColumns: `repeat(${columnCount}, ${cardWidth}px)`, gap: GRID_GAP, justifyContent: 'center' }}
                 >
                   {Array.from({ length: columnCount }).map((_, i) => (
@@ -234,7 +252,7 @@ export function GalleryGrid({
               }}
             >
               <div
-                className="grid px-0 motion-gallery-row"
+                className="grid px-0"
                 style={{ gridTemplateColumns: `repeat(${columnCount}, ${cardWidth}px)`, gap: GRID_GAP, justifyContent: 'center' }}
               >
                 {rowImages.map(img => (
