@@ -3,6 +3,7 @@ import { Button } from '../ui'; // UI组件: 按钮
 import { truncate } from '../../lib/utils'; // 字符串截断工具
 import { useI18n, tReplace } from '../../i18n'; // 国际化Hook
 import type { AiTagFinished, AiTagProgress, BackupProgress, BackupResult, ImageStats, ImportProgress, ImportResult, ViewType } from '../../types'; // 类型定义
+import type { GalleryDensity } from '../gallery/GalleryGrid'; // 网格密度类型
 import type { SortField, SortDirection } from '../../hooks/useGallery'; // 排序类型
 import { StatusBar } from './StatusBar'; // 左下角后台任务状态
 
@@ -28,6 +29,8 @@ interface SidebarProps {
   onSortByChange: (field: SortField) => void;
   sortDir: SortDirection;
   onSortDirChange: (dir: SortDirection) => void;
+  galleryDensity: GalleryDensity;
+  onGalleryDensityChange: (density: GalleryDensity) => void;
   importProgress: ImportProgress | null;
   importResult: ImportResult | null;
   reparseProgress: { done: number; total: number } | null;
@@ -42,6 +45,7 @@ export function Sidebar({
   hideNSFW, onToggleNSFW, nsfwTags, onAddNSFWTag, onRemoveNSFWTag,
   onRefresh, isRefreshing, refreshProgress,
   sortBy, onSortByChange, sortDir, onSortDirChange,
+  galleryDensity, onGalleryDensityChange,
   importProgress, importResult, reparseProgress,
   backupProgress, backupResult, aiTagProgress, aiTagResult,
 }: SidebarProps) {
@@ -217,6 +221,24 @@ export function Sidebar({
       <div className="divider-h" />
       <div className="flex flex-col gap-2">
         <h3 className="text-caption text-ink-muted uppercase tracking-widest">{t.sidebar.sort}</h3>
+
+        {/* 网格密度：默认中等大约一屏四行，小/大用于快速切换可视信息量 */}
+        <div className="grid grid-cols-3 gap-1 rounded-btn border border-ink-line bg-ink-surface/60 p-1">
+          {(['small', 'medium', 'large'] as const).map(size => (
+            <button
+              key={size}
+              type="button"
+              onClick={() => onGalleryDensityChange(size)}
+              className={`px-2 py-1.5 text-xs rounded-[8px] transition-colors ${
+                galleryDensity === size
+                  ? 'bg-ink text-white font-medium'
+                  : 'text-ink-muted hover:text-ink hover:bg-ink-bg'
+              }`}
+            >
+              {size === 'small' ? t.sidebar.gridSmall : size === 'medium' ? t.sidebar.gridMedium : t.sidebar.gridLarge}
+            </button>
+          ))}
+        </div>
 
         {/* Sort field select */}
         <select

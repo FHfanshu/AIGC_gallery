@@ -10,11 +10,17 @@ import { useI18n } from '../../i18n';
 import type { ImageRecord } from '../../types';
 
 // 卡片最小宽度（决定列数），实际宽度根据容器自动撑满
-const MIN_CARD_WIDTH = 140;
-const MAX_COLUMNS = 8;
 const GRID_GAP = 16;
 const CARD_CAPTION_HEIGHT = 52;
 const ROW_GAP = 16;
+
+export type GalleryDensity = 'small' | 'medium' | 'large';
+
+const DENSITY_CARD_WIDTH: Record<GalleryDensity, number> = {
+  small: 120,
+  medium: 140,
+  large: 180,
+};
 
 interface GalleryGridProps {
   images: ImageRecord[];
@@ -29,11 +35,12 @@ interface GalleryGridProps {
   onLoadMore: () => void;
   onViewportCapacityChange?: (capacity: number) => void;
   scrollToImageId?: number | null;
+  density: GalleryDensity;
 }
 
 /** 画廊网格：基于虚拟滚动的图片列表，滚动到底部自动触发加载更多 */
 export function GalleryGrid({
-  images, loading, hasMore, selectedId, onSelect, onToggleFavorite, onHideImage, isImageHidden, onUnhideImage, onLoadMore, onViewportCapacityChange, scrollToImageId,
+  images, loading, hasMore, selectedId, onSelect, onToggleFavorite, onHideImage, isImageHidden, onUnhideImage, onLoadMore, onViewportCapacityChange, scrollToImageId, density,
 }: GalleryGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const { t } = useI18n();
@@ -44,12 +51,12 @@ export function GalleryGrid({
 
   // 根据容器宽度计算列数，卡片宽度自适应撑满
   const { columnCount, cardWidth } = useMemo(() => {
-    if (containerWidth <= 0) return { columnCount: 1, cardWidth: MIN_CARD_WIDTH };
-    const cols = Math.max(1, Math.min(MAX_COLUMNS,
-      Math.floor((containerWidth + GRID_GAP) / (MIN_CARD_WIDTH + GRID_GAP))));
+    const minCardWidth = DENSITY_CARD_WIDTH[density];
+    if (containerWidth <= 0) return { columnCount: 1, cardWidth: minCardWidth };
+    const cols = Math.max(1, Math.floor((containerWidth + GRID_GAP) / (minCardWidth + GRID_GAP)));
     const cw = (containerWidth - (cols - 1) * GRID_GAP) / cols;
-    return { columnCount: cols, cardWidth: Math.max(MIN_CARD_WIDTH, cw) };
-  }, [containerWidth]);
+    return { columnCount: cols, cardWidth: Math.max(minCardWidth, cw) };
+  }, [containerWidth, density]);
 
   const rowHeight = cardWidth + CARD_CAPTION_HEIGHT;
   const rows = Math.ceil(images.length / columnCount); // 总行数

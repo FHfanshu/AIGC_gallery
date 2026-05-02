@@ -9,7 +9,7 @@ import { listen } from '@tauri-apps/api/event';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { SettingsPage } from './components/layout/SettingsPage';
-import { GalleryGrid } from './components/gallery/GalleryGrid';
+import { GalleryGrid, type GalleryDensity } from './components/gallery/GalleryGrid';
 import { ImageDetail } from './components/gallery/ImageDetail';
 import { useGallery, useFavorites, useStats, useNSFWFilter } from './hooks';
 import { api } from './lib/tauri';
@@ -35,6 +35,10 @@ function App() {
   const [isRefreshing, setIsRefreshing] = useState(false); // 顶部刷新按钮反馈状态
   const [scrollToImageId, setScrollToImageId] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [galleryDensity, setGalleryDensity] = useState<GalleryDensity>(() => {
+    const saved = localStorage.getItem('aigc-gallery-density');
+    return saved === 'small' || saved === 'large' ? saved : 'medium';
+  });
 
   const nsfw = useNSFWFilter();
   const gallery = useGallery();
@@ -45,6 +49,10 @@ function App() {
   const handleDropFilesRef = useRef<(files: string[]) => void>(() => {});
 
   const supportedImageExtensions = ['.png', '.jpg', '.jpeg', '.webp'];
+
+  useEffect(() => {
+    localStorage.setItem('aigc-gallery-density', galleryDensity);
+  }, [galleryDensity]);
 
   // 监听后端推送的导入进度和完成事件
   useEffect(() => {
@@ -346,6 +354,8 @@ function App() {
           onSortByChange={gallery.setSortBy}
           sortDir={gallery.sortDir}
           onSortDirChange={gallery.setSortDir}
+          galleryDensity={galleryDensity}
+          onGalleryDensityChange={setGalleryDensity}
           importProgress={importProgress}
           importResult={importResult}
           reparseProgress={reparseProgress}
@@ -381,6 +391,7 @@ function App() {
             onLoadMore={gallery.loadMore}
             onViewportCapacityChange={gallery.setLoadLimit}
             scrollToImageId={scrollToImageId}
+            density={galleryDensity}
           />
         </main>
 
