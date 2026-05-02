@@ -134,15 +134,15 @@ jobs:
           fi
 
           cat > release_body.md << 'EOF'
-## 安装说明
+          ## 安装说明
 
-- **Windows x64**: 下载 `.msi` 或 `.exe` 安装包，双击运行即可安装
-- NSIS 安装程序界面语言跟随系统语言自动切换
+          - **Windows x64**: 下载 `.msi` 或 `.exe` 安装包，双击运行即可安装
+          - NSIS 安装程序界面语言跟随系统语言自动切换
 
-> 已安装旧版本的用户直接运行新版安装包覆盖安装即可，用户数据（图库、标签、收藏）会自动保留。
+          > 已安装旧版本的用户直接运行新版安装包覆盖安装即可，用户数据（图库、标签、收藏）会自动保留。
 
-## 更新内容
-EOF
+          ## 更新内容
+          EOF
 
           git log "$range" --pretty=format:'- %s (%h)' --no-merges >> release_body.md
           echo >> release_body.md
