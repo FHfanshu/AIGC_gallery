@@ -2,7 +2,7 @@
  * 图片画廊网格组件
  * 使用虚拟滚动渲染大量图片，支持分页加载和空状态展示
  */
-import { useRef, useEffect, useMemo, useState } from 'react';
+import { useRef, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ImageCard } from './ImageCard';
 import { Card } from '../ui';
@@ -81,17 +81,18 @@ export function GalleryGrid({
 
   // 详情面板开关或窗口缩放会改变网格宽度，虚拟滚动必须同步重算行高
   // ResizeObserver 监听容器宽度变化，防抖跨过面板动画避免列数跳变
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = parentRef.current;
     if (!el) return;
     let timer: number | undefined;
     const measureWidth = () => setContainerWidth(Math.max(0, el.clientWidth - 64));
     const updateWidth = () => {
+      measureWidth();
       if (timer) window.clearTimeout(timer);
-      // 280ms 防抖让面板动画期间网格保持当前列数，动画结束后一次到位
+      // 面板动画结束后再测一次，避免列数在动画中间停在错误宽度。
       timer = window.setTimeout(measureWidth, 280);
     };
-    measureWidth();
+    updateWidth();
     const observer = new ResizeObserver(updateWidth);
     observer.observe(el);
     return () => { observer.disconnect(); if (timer) window.clearTimeout(timer); };
