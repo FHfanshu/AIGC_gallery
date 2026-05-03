@@ -409,7 +409,7 @@ impl Database {
     }
 
     fn row_to_image(row: &rusqlite::Row) -> rusqlite::Result<ImageRecord> {
-        Ok(ImageRecord {
+        let mut image = ImageRecord {
             id: row.get(0)?,
             file_path: row.get(1)?,
             file_name: row.get(2)?,
@@ -427,7 +427,20 @@ impl Database {
             is_favorite: row.get::<_, i64>(14)? != 0,
             tags: Vec::new(),
             ai_annotation: None,
-        })
+        };
+        Self::relocate_internal_paths(&mut image);
+        Ok(image)
+    }
+
+    fn relocate_internal_paths(image: &mut ImageRecord) {
+        image.stored_path = crate::utils::paths::relocate_gallery_file_path_string(
+            image.stored_path.take(),
+            "images",
+        );
+        image.thumbnail_path = crate::utils::paths::relocate_gallery_file_path_string(
+            image.thumbnail_path.take(),
+            "thumbnails",
+        );
     }
 
     fn fill_batch_tags(&self, images: &mut [ImageRecord]) -> Result<(), String> {
@@ -718,8 +731,8 @@ impl Database {
         let rows = stmt.query_map([], |row| Ok(AiTagTarget {
             id: row.get(0)?,
             file_path: row.get(1)?,
-            stored_path: row.get(2)?,
-            thumbnail_path: row.get(3)?,
+            stored_path: crate::utils::paths::relocate_gallery_file_path_string(row.get(2)?, "images"),
+            thumbnail_path: crate::utils::paths::relocate_gallery_file_path_string(row.get(3)?, "thumbnails"),
         })).map_err(|e| e.to_string())?;
         rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
     }
@@ -821,7 +834,7 @@ impl Database {
         ).map_err(|e| e.to_string())?;
 
         let rows = stmt.query_map(params![limit, offset], |row| {
-            Ok(ImageRecord {
+            let mut image = ImageRecord {
                 id: row.get(0)?,
                 file_path: row.get(1)?,
                 file_name: row.get(2)?,
@@ -839,7 +852,9 @@ impl Database {
                 is_favorite: true,
                 tags: Vec::new(),
                 ai_annotation: None,
-            })
+            };
+            Self::relocate_internal_paths(&mut image);
+            Ok(image)
         }).map_err(|e| e.to_string())?;
 
         let mut images: Vec<ImageRecord> = rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;

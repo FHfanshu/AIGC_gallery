@@ -39,8 +39,17 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
       if (started || cancelled) return;
       started = true;
       const src = api.getThumbnailSrc(image);
-      setImgSrc(src);
-      setLoaded(true);
+      if (src) {
+        setImgSrc(src);
+        return;
+      }
+      api.getImageBase64(image.id, true)
+        .then(src => {
+          if (!cancelled) setImgSrc(src);
+        })
+        .catch(() => {
+          if (!cancelled) setLoaded(true);
+        });
     };
 
     const observer = new IntersectionObserver(entries => {
@@ -70,28 +79,41 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
     >
       {/* 图片区域 */}
       <div className="relative aspect-square overflow-hidden bg-ink-surface">
-        {!loaded ? (
-          // 加载中骨架屏
-          <div className="w-full h-full bg-ink-surface animate-pulse relative overflow-hidden">
-            <div className="absolute inset-0 motion-shimmer" />
-          </div>
-        ) : imgSrc ? (
+        {imgSrc ? (
           <img
             src={imgSrc}
             alt={image.file_name}
-            className="w-full h-full object-cover object-top motion-media-in"
+            className={cn(
+              'w-full h-full object-cover object-top transition-opacity duration-200',
+              loaded ? 'opacity-100 motion-media-in' : 'opacity-0'
+            )}
             onLoad={() => setLoaded(true)}
             onError={() => {
+              setLoaded(false);
               const fallback = api.getStoredImageSrc(image);
               if (fallback && fallback !== imgSrc) {
                 setImgSrc(fallback);
               } else {
-                setLoaded(true);
-                setImgSrc('');
+                api.getImageBase64(image.id, true)
+                  .then(src => setImgSrc(src))
+                  .catch(() => {
+                    setImgSrc('');
+                    setLoaded(true);
+                  });
               }
             }}
           />
         ) : null}
+
+        {/* 缩略图真正完成加载前显示加载动画，避免 asset/base64 等待期间出现空白。 */}
+        {!loaded && (
+          <div className="absolute inset-0 bg-ink-surface motion-thumb-loading">
+            <div className="absolute inset-0 motion-shimmer" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="motion-thumb-orbit" />
+            </div>
+          </div>
+        )}
 
         {/* 来源标签（如 SD、MJ 等） */}
         <span

@@ -81,16 +81,16 @@ impl Default for AppConfig {
 
 /// 默认图库根目录。
 ///
-/// 开发模式下 current_exe 位于 src-tauri/target/debug，不能把数据放进 target，
+/// 开发模式下 current_exe 位于 src-tauri/target/debug 或 release，不能把数据放进 target，
 /// 因为 cargo clean 会删除它。因此检测到该结构时使用项目根目录/gallery-data。
-/// 发布模式下使用 exe 同级目录/gallery-data。
+/// 发布模式下优先复用 exe 周边已经存在的 gallery-data，避免 MSI/NSIS 目录层级变化后新建空库。
 pub fn default_storage_dir() -> PathBuf {
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-    if exe_dir.file_name().and_then(|s| s.to_str()) == Some("debug") {
+    if matches!(exe_dir.file_name().and_then(|s| s.to_str()), Some("debug" | "release")) {
         if let Some(target_dir) = exe_dir.parent() {
             if target_dir.file_name().and_then(|s| s.to_str()) == Some("target") {
                 if let Some(src_tauri_dir) = target_dir.parent() {
@@ -104,7 +104,52 @@ pub fn default_storage_dir() -> PathBuf {
         }
     }
 
-    exe_dir.join("gallery-data")
+    let default_dir = exe_dir.join("gallery-data");
+    let mut candidates = vec![default_dir.clone()];
+    if let Some(parent) = exe_dir.parent() {
+        candidates.push(parent.join("gallery-data"));
+        if let Some(grandparent) = parent.parent() {
+            candidates.push(grandparent.join("gallery-data"));
+        }
+    }
+
+    let mut best_existing: Option<(PathBuf, u8)> = None;
+    for candidate in &candidates {
+        if !candidate.join("gallery.db").is_file() {
+            continue;
+        }
+        let score = storage_candidate_score(candidate);
+        if best_existing.as_ref().map(|(_, best_score)| score > *best_score).unwrap_or(true) {
+            best_existing = Some((candidate.clone(), score));
+        }
+    }
+    if let Some((candidate, _)) = best_existing {
+        return candidate;
+    }
+
+    default_dir
+}
+
+fn dir_has_file(path: &Path) -> bool {
+    fs::read_dir(path)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .any(|entry| entry.file_type().map(|t| t.is_file()).unwrap_or(false))
+}
+
+fn storage_candidate_score(path: &Path) -> u8 {
+    let mut score = 0;
+    if path.join("gallery.db").is_file() {
+        score += 4;
+    }
+    if dir_has_file(&path.join("images")) {
+        score += 2;
+    }
+    if dir_has_file(&path.join("thumbnails")) {
+        score += 1;
+    }
+    score
 }
 
 fn config_path() -> PathBuf {

@@ -9,7 +9,7 @@ import { Card } from '../ui';
 import { useI18n } from '../../i18n';
 import type { ImageRecord } from '../../types';
 
-// 卡片最小宽度（决定列数），实际宽度根据容器自动撑满
+// 卡片目标宽度（决定列数），不同密度保持明确可感知的尺寸差异
 const GRID_GAP = 16;
 const GRID_HORIZONTAL_PADDING = 64;
 const CARD_CAPTION_HEIGHT = 52;
@@ -19,9 +19,9 @@ const SIDEBAR_WIDTH = 280;
 export type GalleryDensity = 'small' | 'medium' | 'large';
 
 const DENSITY_CARD_WIDTH: Record<GalleryDensity, number> = {
-  small: 120,
-  medium: 140,
-  large: 180,
+  small: 108,
+  medium: 156,
+  large: 220,
 };
 
 interface ScrollAnchor {
@@ -63,13 +63,12 @@ export function GalleryGrid({
   const containerWidthRef = useRef(containerWidth);
   const layoutRef = useRef({ columnCount: 1, rowSize: 1 });
 
-  // 根据容器宽度计算列数，卡片宽度自适应撑满
+  // 根据目标卡片宽度计算列数，避免小/中密度被整行拉伸后看起来没变化。
   const { columnCount, cardWidth } = useMemo(() => {
-    const minCardWidth = DENSITY_CARD_WIDTH[density];
-    if (containerWidth <= 0) return { columnCount: 1, cardWidth: minCardWidth };
-    const cols = Math.max(1, Math.floor((containerWidth + GRID_GAP) / (minCardWidth + GRID_GAP)));
-    const cw = (containerWidth - (cols - 1) * GRID_GAP) / cols;
-    return { columnCount: cols, cardWidth: Math.max(minCardWidth, cw) };
+    const targetCardWidth = DENSITY_CARD_WIDTH[density];
+    if (containerWidth <= 0) return { columnCount: 1, cardWidth: targetCardWidth };
+    const cols = Math.max(1, Math.floor((containerWidth + GRID_GAP) / (targetCardWidth + GRID_GAP)));
+    return { columnCount: cols, cardWidth: Math.min(targetCardWidth, containerWidth) };
   }, [containerWidth, density]);
 
   const rowHeight = cardWidth + CARD_CAPTION_HEIGHT;
@@ -152,7 +151,7 @@ export function GalleryGrid({
       if (raf) window.cancelAnimationFrame(raf);
       if (timer) window.clearTimeout(timer);
     };
-  }, [images.length, selectedId]);
+  }, [density, images.length, selectedId]);
 
   // 列数变化后：用之前记录的顶部图片索引计算新行号，避免 4 列变 2 列时同一像素偏移映射到错误图片。
   useLayoutEffect(() => {

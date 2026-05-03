@@ -47,9 +47,25 @@
   }
 
   .motion-shimmer {
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent);
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.58), transparent);
     background-size: 240% 100%;
     animation: motion-shimmer 2.2s ease-in-out infinite;
+  }
+
+  .motion-thumb-loading {
+    background:
+      radial-gradient(circle at 50% 44%, rgba(26, 26, 26, 0.06), transparent 30%),
+      linear-gradient(135deg, #FAFAFA, #F4F4F4);
+  }
+
+  .motion-thumb-orbit {
+    width: 28px;
+    height: 28px;
+    border-radius: 9999px;
+    border: 1px solid rgba(26, 26, 26, 0.12);
+    border-top-color: rgba(26, 26, 26, 0.66);
+    box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.46);
+    animation: motion-thumb-orbit 760ms linear infinite;
   }
 
   /* Gallery 滚动反馈只修改容器阴影，避免 React 重渲染和多行滤镜重绘 */
@@ -84,4 +100,8 @@
 @keyframes motion-shimmer {
   from { background-position: 120% 0; }
   to { background-position: -120% 0; }
+}
+
+@keyframes motion-thumb-orbit {
+  to { transform: rotate(360deg); }
 }
