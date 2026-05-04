@@ -5,17 +5,17 @@ export default {
     extend: {
       colors: {
         ink: {
-          DEFAULT: '#1A1A1A',
-          secondary: '#4A4A4A',
-          muted: '#8A8A8A',
-          faint: '#C0C0C0',
-          line: '#E8E8E8',
-          bg: '#FFFFFF',
-          surface: '#FAFAFA',
-          accent: '#1A1A1A',
-          'accent-soft': '#F5F5F5',
-          danger: '#DC2626',
-          success: '#16A34A',
+          DEFAULT: 'rgb(var(--color-ink) / <alpha-value>)',
+          secondary: 'rgb(var(--color-ink-secondary) / <alpha-value>)',
+          muted: 'rgb(var(--color-ink-muted) / <alpha-value>)',
+          faint: 'rgb(var(--color-ink-faint) / <alpha-value>)',
+          line: 'rgb(var(--color-ink-line) / <alpha-value>)',
+          bg: 'rgb(var(--color-ink-bg) / <alpha-value>)',
+          surface: 'rgb(var(--color-ink-surface) / <alpha-value>)',
+          accent: 'rgb(var(--color-ink) / <alpha-value>)',
+          'accent-soft': 'rgb(var(--color-ink-accent-soft) / <alpha-value>)',
+          danger: 'rgb(var(--color-ink-danger) / <alpha-value>)',
+          success: 'rgb(var(--color-ink-success) / <alpha-value>)',
         },
       },
       borderRadius: {

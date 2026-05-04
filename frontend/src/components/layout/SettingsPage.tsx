@@ -4,18 +4,20 @@ import { confirm } from '@tauri-apps/plugin-dialog';
 import { Button, Card, Input } from '../ui';
 import { api } from '../../lib/tauri';
 import { useI18n, tReplace } from '../../i18n';
-import type { BackupProgress, BackupResult, CivitaiBaseUrl, ImportStrategy, StorageConfig } from '../../types';
+import type { BackupProgress, BackupResult, CivitaiBaseUrl, ImportStrategy, StorageConfig, ThemeMode } from '../../types';
 
 interface SettingsPageProps {
   open: boolean;
   onClose: () => void;
+  themeMode: ThemeMode;
+  onThemeModeChange: (mode: ThemeMode) => void;
   backupProgress: BackupProgress | null;
   backupResult: BackupResult | null;
   onBackupProgressReset: () => void;
 }
 
 /** 设置页：集中管理语言、存储、外部 API 与数据备份，避免 Sidebar 承载过多全局配置。 */
-export function SettingsPage({ open, onClose, backupProgress, backupResult, onBackupProgressReset }: SettingsPageProps) {
+export function SettingsPage({ open, onClose, themeMode, onThemeModeChange, backupProgress, backupResult, onBackupProgressReset }: SettingsPageProps) {
   const { t, locale, setLocale } = useI18n();
   const [storageConfig, setStorageConfig] = useState<StorageConfig | null>(null);
   const [customDir, setCustomDir] = useState('');
@@ -163,6 +165,33 @@ export function SettingsPage({ open, onClose, backupProgress, backupResult, onBa
         </div>
 
         <div className="p-6 space-y-5">
+          <Card padding="md" bordered className="space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">{t.sidebar.theme}</h3>
+              <p className="mt-1 text-xs text-ink-muted">{t.sidebar.themeDesc}</p>
+            </div>
+            <div className="grid grid-cols-3 gap-1 rounded-btn border border-ink-line bg-ink-surface/60 p-1">
+              {([
+                ['system', t.sidebar.themeSystem],
+                ['light', t.sidebar.themeLight],
+                ['dark', t.sidebar.themeDark],
+              ] as const).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => onThemeModeChange(mode)}
+                  className={`px-3 py-2 text-xs rounded-btn transition-colors ${
+                    themeMode === mode
+                      ? 'bg-ink text-ink-bg font-medium'
+                      : 'text-ink-muted hover:text-ink hover:bg-ink-bg'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </Card>
+
           <Card padding="md" bordered className="space-y-4">
             <h3 className="text-sm font-semibold text-ink">{t.sidebar.general}</h3>
             <div>
@@ -273,7 +302,7 @@ export function SettingsPage({ open, onClose, backupProgress, backupResult, onBa
               <div className="rounded-btn border border-ink-line bg-ink-surface p-2">
                 <div className="h-2 bg-ink-line rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-ink-primary rounded-full transition-all duration-200"
+                    className="h-full bg-ink rounded-full transition-all duration-200"
                     style={{ width: `${aiTagProgress.total > 0 ? Math.round((aiTagProgress.done / aiTagProgress.total) * 100) : 0}%` }}
                   />
                 </div>

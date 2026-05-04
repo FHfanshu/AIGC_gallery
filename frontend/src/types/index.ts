@@ -201,3 +201,4 @@ export interface CivitaiLookupResult {
 }
 
 export type ViewType = 'gallery' | 'favorites' | 'settings';
+export type ThemeMode = 'system' | 'light' | 'dark';

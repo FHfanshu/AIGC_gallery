@@ -45,12 +45,20 @@ export function ImageDetail({
   const meta: ImageMetadata | null = parseMetadata(image.metadata_json); // 解析元数据 JSON
   const source = meta ? getSourceLabel(meta.source) : null;
 
-  // 加载全尺寸图片（非缩略图）
+  // 原图优先走 Tauri asset 协议，避免大图通过 IPC 转 Base64 带来的内存和耗时开销。
   useEffect(() => {
     let cancelled = false;
-    setImgSrc('');
     setImageLoading(true);
     setImageLoadFailed(false);
+
+    const assetSrc = api.getStoredImageSrc(image);
+    if (assetSrc) {
+      setImgSrc(assetSrc);
+      setImageLoading(false);
+      return () => { cancelled = true; };
+    }
+
+    setImgSrc('');
     api.getImageBase64(image.id, false)
       .then(src => {
         if (!cancelled) {
@@ -67,6 +75,26 @@ export function ImageDetail({
       });
     return () => { cancelled = true; };
   }, [image.id, image.stored_path, image.file_path]);
+
+  const handleImageLoadError = () => {
+    if (imgSrc.startsWith('data:')) {
+      setImgSrc('');
+      setImageLoading(false);
+      setImageLoadFailed(true);
+      return;
+    }
+
+    api.getImageBase64(image.id, false)
+      .then(src => {
+        setImgSrc(src);
+        setImageLoading(false);
+      })
+      .catch(() => {
+        setImgSrc('');
+        setImageLoading(false);
+        setImageLoadFailed(true);
+      });
+  };
 
   // 切换图片时重置编辑状态
   useEffect(() => {
@@ -202,7 +230,7 @@ export function ImageDetail({
   ].filter(Boolean) as [string, string][];
 
   return (
-    <aside className="w-[400px] min-w-[400px] h-screen flex flex-col bg-ink-bg border-l border-ink-line overflow-y-auto">
+    <aside className="fixed right-0 top-0 bottom-0 z-50 w-[400px] max-w-[calc(100vw-280px)] flex flex-col bg-ink-bg border-l border-ink-line shadow-2xl overflow-y-auto">
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-ink-line">
         <h3 className="font-display font-bold text-sm text-ink uppercase tracking-wider">{t.detail.imageDetail}</h3>
@@ -250,6 +278,8 @@ export function ImageDetail({
               src={imgSrc}
               alt={image.file_name}
               className="w-full h-auto"
+              onLoad={() => setImageLoading(false)}
+              onError={handleImageLoadError}
             />
           ) : (
             <div className="aspect-square w-full flex items-center justify-center px-6 text-center text-xs text-ink-muted">

@@ -107,10 +107,19 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
 
         {/* 缩略图真正完成加载前显示加载动画，避免 asset/base64 等待期间出现空白。 */}
         {!loaded && (
-          <div className="absolute inset-0 bg-ink-surface motion-thumb-loading">
+          <div
+            className="absolute inset-0 bg-ink-surface motion-thumb-loading"
+            style={{ ['--source-color' as string]: source.color }}
+          >
+            <div className="absolute inset-0 motion-thumb-blocks" />
+            <div className="absolute inset-0 motion-thumb-grain" />
+            <div className="absolute inset-x-0 bottom-0 h-1/3 motion-thumb-veil" />
             <div className="absolute inset-0 motion-shimmer" />
-            <div className="absolute inset-0 flex items-center justify-center">
+            <div className="absolute left-2 bottom-2 right-2 flex items-center gap-2">
               <div className="motion-thumb-orbit" />
+              <div className="h-px flex-1 bg-ink/10 overflow-hidden">
+                <div className="motion-thumb-line" />
+              </div>
             </div>
           </div>
         )}
@@ -133,7 +142,7 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
             }}
             className={cn(
               'w-7 h-7 rounded-full flex items-center justify-center transition-colors duration-150 active:brightness-90',
-              'bg-white/90 backdrop-blur-sm hover:bg-white hover:shadow-sm',
+              'bg-ink-bg/90 backdrop-blur-sm hover:bg-ink-bg hover:shadow-sm',
               image.is_favorite && '!opacity-100'
             )}
           >
@@ -163,7 +172,7 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
                 }
               }}
               title={isImageHidden?.(image.id) ? t.header.unhideImage : t.header.markAsNSFW}
-              className="w-7 h-7 rounded-full flex items-center justify-center bg-white/90 backdrop-blur-sm hover:bg-red-50 hover:shadow-sm active:brightness-90 transition-colors duration-150"
+              className="w-7 h-7 rounded-full flex items-center justify-center bg-ink-bg/90 backdrop-blur-sm hover:bg-ink-surface hover:shadow-sm active:brightness-90 transition-colors duration-150"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A8A8A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />

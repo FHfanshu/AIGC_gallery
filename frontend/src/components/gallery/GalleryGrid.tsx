@@ -7,6 +7,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { ImageCard } from './ImageCard';
 import { Card } from '../ui';
 import { useI18n } from '../../i18n';
+import { api } from '../../lib/tauri';
 import type { ImageRecord } from '../../types';
 
 // 卡片目标宽度（决定列数），不同密度保持明确可感知的尺寸差异
@@ -15,6 +16,8 @@ const GRID_HORIZONTAL_PADDING = 64;
 const CARD_CAPTION_HEIGHT = 52;
 const ROW_GAP = 16;
 const SIDEBAR_WIDTH = 280;
+const PRELOAD_ROWS_AHEAD = 8;
+const PRELOAD_ROWS_BEHIND = 3;
 
 export type GalleryDensity = 'small' | 'medium' | 'large';
 
@@ -43,12 +46,13 @@ interface GalleryGridProps {
   onLoadMore: () => void;
   onViewportCapacityChange?: (capacity: number) => void;
   scrollToImageId?: number | null;
+  onScrollToImageHandled?: () => void;
   density: GalleryDensity;
 }
 
 /** 画廊网格：基于虚拟滚动的图片列表，滚动到底部自动触发加载更多 */
 export function GalleryGrid({
-  images, loading, hasMore, selectedId, onSelect, onToggleFavorite, onHideImage, isImageHidden, onUnhideImage, onLoadMore, onViewportCapacityChange, scrollToImageId, density,
+  images, loading, hasMore, selectedId, onSelect, onToggleFavorite, onHideImage, isImageHidden, onUnhideImage, onLoadMore, onViewportCapacityChange, scrollToImageId, onScrollToImageHandled, density,
 }: GalleryGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const { t } = useI18n();
@@ -60,6 +64,8 @@ export function GalleryGrid({
   const scrollEndTimerRef = useRef<number | null>(null);
   const scrollRafRef = useRef<number | null>(null);
   const pendingAnchorRef = useRef<ScrollAnchor | null>(null);
+  const scrollDirectionRef = useRef<'up' | 'down'>('down');
+  const preloadedImageIdsRef = useRef(new Set<number>());
   const containerWidthRef = useRef(containerWidth);
   const layoutRef = useRef({ columnCount: 1, rowSize: 1 });
 
@@ -151,7 +157,7 @@ export function GalleryGrid({
       if (raf) window.cancelAnimationFrame(raf);
       if (timer) window.clearTimeout(timer);
     };
-  }, [density, images.length, selectedId]);
+  }, [density, images.length]);
 
   // 列数变化后：用之前记录的顶部图片索引计算新行号，避免 4 列变 2 列时同一像素偏移映射到错误图片。
   useLayoutEffect(() => {
@@ -177,9 +183,43 @@ export function GalleryGrid({
   useEffect(() => {
     if (!scrollToImageId) return;
     const imageIndex = images.findIndex(img => img.id === scrollToImageId);
-    if (imageIndex < 0) return;
+    if (imageIndex < 0) {
+      if (hasMore && !loading) {
+        onLoadMore();
+      }
+      return;
+    }
     virtualizer.scrollToIndex(Math.floor(imageIndex / columnCount), { align: 'center' });
-  }, [columnCount, images, scrollToImageId, virtualizer]);
+    onScrollToImageHandled?.();
+  }, [columnCount, hasMore, images, loading, onLoadMore, onScrollToImageHandled, scrollToImageId, virtualizer]);
+
+  // 根据滚动方向预热即将进入视口的缩略图；向上滚时预载上方，向下滚时预载下方。
+  useEffect(() => {
+    const virtualItems = virtualizer.getVirtualItems();
+    if (virtualItems.length === 0 || images.length === 0) return;
+
+    const firstRow = virtualItems[0].index;
+    const lastRow = virtualItems[virtualItems.length - 1].index;
+    const direction = scrollDirectionRef.current;
+    const preloadStartRow = direction === 'down'
+      ? Math.max(0, firstRow - PRELOAD_ROWS_BEHIND)
+      : Math.max(0, firstRow - PRELOAD_ROWS_AHEAD);
+    const preloadEndRow = direction === 'down'
+      ? Math.min(rows - 1, lastRow + PRELOAD_ROWS_AHEAD)
+      : Math.min(rows - 1, lastRow + PRELOAD_ROWS_BEHIND);
+
+    const startIndex = preloadStartRow * columnCount;
+    const endIndex = Math.min(images.length, (preloadEndRow + 1) * columnCount);
+    for (let index = startIndex; index < endIndex; index += 1) {
+      const image = images[index];
+      if (!image || preloadedImageIdsRef.current.has(image.id)) continue;
+      const src = api.getThumbnailSrc(image);
+      if (!src) continue;
+      preloadedImageIdsRef.current.add(image.id);
+      const preload = new Image();
+      preload.src = src;
+    }
+  }, [columnCount, images, rows, virtualizer.getVirtualItems()]);
 
   const handleScroll = () => {
     const el = parentRef.current;
@@ -189,6 +229,7 @@ export function GalleryGrid({
       scrollRafRef.current = null;
       const nextTop = el.scrollTop;
       const direction = nextTop >= lastScrollTopRef.current ? 'down' : 'up';
+      scrollDirectionRef.current = direction;
       lastScrollTopRef.current = nextTop;
 
       el.classList.toggle('motion-gallery-scroll-down', direction === 'down');

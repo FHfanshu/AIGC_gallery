@@ -14,7 +14,12 @@ import { ImageDetail } from './components/gallery/ImageDetail';
 import { useGallery, useFavorites, useStats, useNSFWFilter } from './hooks';
 import { api } from './lib/tauri';
 import { useI18n } from './i18n';
-import type { AiTagFinished, AiTagProgress, BackupProgress, BackupResult, ImageRecord, ImportProgress, ImportResult, ViewType } from './types';
+import type { AiTagFinished, AiTagProgress, BackupProgress, BackupResult, ImageRecord, ImportProgress, ImportResult, ThemeMode, ViewType } from './types';
+
+function resolveThemeMode(mode: ThemeMode): 'light' | 'dark' {
+  if (mode !== 'system') return mode;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
 
 function App() {
   // 当前视图：gallery（画廊）/ favorites（收藏）
@@ -39,6 +44,10 @@ function App() {
     const saved = localStorage.getItem('aigc-gallery-density');
     return saved === 'small' || saved === 'large' ? saved : 'medium';
   });
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    const saved = localStorage.getItem('aigc-gallery-theme');
+    return saved === 'light' || saved === 'dark' || saved === 'system' ? saved : 'system';
+  });
 
   const nsfw = useNSFWFilter();
   const gallery = useGallery();
@@ -53,6 +62,20 @@ function App() {
   useEffect(() => {
     localStorage.setItem('aigc-gallery-density', galleryDensity);
   }, [galleryDensity]);
+
+  // 主题偏好保存在本地；跟随系统时监听系统深浅色变化。
+  useEffect(() => {
+    const applyTheme = () => {
+      document.documentElement.dataset.theme = resolveThemeMode(themeMode);
+    };
+    localStorage.setItem('aigc-gallery-theme', themeMode);
+    applyTheme();
+
+    if (themeMode !== 'system') return;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    media.addEventListener('change', applyTheme);
+    return () => media.removeEventListener('change', applyTheme);
+  }, [themeMode]);
 
   // 监听后端推送的导入进度和完成事件
   useEffect(() => {
@@ -304,6 +327,11 @@ function App() {
     setSelectedImage(image);
   }, [currentImages]);
 
+  // 详情面板是浮层，不改变网格布局；关闭时只收起面板，避免打断用户当前滚动位置。
+  const handleCloseDetail = useCallback(() => {
+    setSelectedImage(null);
+  }, []);
+
   const searchCandidates = useMemo(() => {
     const counts = new Map<string, number>();
     const addTag = (tag: string) => {
@@ -391,6 +419,7 @@ function App() {
             onLoadMore={gallery.loadMore}
             onViewportCapacityChange={gallery.setLoadLimit}
             scrollToImageId={scrollToImageId}
+            onScrollToImageHandled={() => setScrollToImageId(null)}
             density={galleryDensity}
           />
         </main>
@@ -398,6 +427,8 @@ function App() {
         <SettingsPage
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
+          themeMode={themeMode}
+          onThemeModeChange={setThemeMode}
           backupProgress={backupProgress}
           backupResult={backupResult}
           onBackupProgressReset={() => {
@@ -410,7 +441,7 @@ function App() {
         {selectedImage && (
           <ImageDetail
             image={selectedImage}
-            onClose={() => setSelectedImage(null)}
+            onClose={handleCloseDetail}
             onDelete={handleDelete}
             onToggleFavorite={handleToggleFavorite}
             onUpdatePrompt={handleUpdatePrompt}
