@@ -179,6 +179,37 @@
     color: rgb(252 165 165);
     border-color: rgb(88 42 39);
   }
+
+  .detail-prompt-resize {
+    position: relative;
+  }
+
+  .detail-prompt-resize-handle {
+    height: 12px;
+    margin-top: -6px;
+    cursor: ns-resize;
+    touch-action: none;
+    position: relative;
+  }
+
+  .detail-prompt-resize-handle::before {
+    content: "";
+    position: absolute;
+    left: 42%;
+    right: 42%;
+    top: 5px;
+    height: 2px;
+    border-radius: 9999px;
+    background: rgb(var(--color-ink-faint) / 0.55);
+    transition: left 140ms ease, right 140ms ease, background-color 140ms ease;
+  }
+
+  .detail-prompt-resize-handle:hover::before,
+  .detail-prompt-resize-handle:active::before {
+    left: 34%;
+    right: 34%;
+    background: rgb(var(--color-ink-muted) / 0.9);
+  }
 }
 
 @keyframes motion-fade-in {

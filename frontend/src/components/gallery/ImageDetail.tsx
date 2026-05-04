@@ -28,6 +28,8 @@ export function ImageDetail({
   const [isEditing, setIsEditing] = useState(false); // 提示词编辑模式
   const [editPrompt, setEditPrompt] = useState('');
   const [editNegPrompt, setEditNegPrompt] = useState('');
+  const [promptHeight, setPromptHeight] = useState(320);
+  const [negPromptHeight, setNegPromptHeight] = useState(180);
   const [copiedField, setCopiedField] = useState<string | null>(null); // 已复制字段标识
   const [imgSrc, setImgSrc] = useState<string>(''); // 全尺寸预览图 base64
   const [imageLoading, setImageLoading] = useState(true);
@@ -41,6 +43,7 @@ export function ImageDetail({
   const [isReparsing, setIsReparsing] = useState(false);
   const [reparseError, setReparseError] = useState<string | null>(null);
   const dragRef = useRef({ active: false, x: 0, y: 0, startX: 0, startY: 0 });
+  const resizeRef = useRef<{ active: false } | { active: true; target: 'prompt' | 'neg'; y: number; height: number }>({ active: false });
 
   const meta: ImageMetadata | null = parseMetadata(image.metadata_json); // 解析元数据 JSON
   const source = meta ? getSourceLabel(meta.source) : null;
@@ -214,6 +217,34 @@ export function ImageDetail({
   const handlePreviewPointerUp = (event: React.PointerEvent<HTMLImageElement>) => {
     dragRef.current.active = false;
     event.stopPropagation();
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
+  const startPromptResize = (target: 'prompt' | 'neg', event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    resizeRef.current = {
+      active: true,
+      target,
+      y: event.clientY,
+      height: target === 'prompt' ? promptHeight : negPromptHeight,
+    };
+  };
+
+  const handlePromptResizeMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const resize = resizeRef.current;
+    if (!resize.active) return;
+    event.preventDefault();
+    const nextHeight = Math.max(120, Math.min(window.innerHeight * 0.68, resize.height + event.clientY - resize.y));
+    if (resize.target === 'prompt') {
+      setPromptHeight(nextHeight);
+    } else {
+      setNegPromptHeight(nextHeight);
+    }
+  };
+
+  const stopPromptResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    resizeRef.current = { active: false };
     event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
@@ -404,8 +435,26 @@ export function ImageDetail({
         {isEditing ? (
           // 编辑模式：正向+负向提示词输入
           <div className="space-y-2">
-            <Textarea value={editPrompt} onChange={e => setEditPrompt(e.target.value)} rows={4} className="!text-xs" />
-            <Textarea value={editNegPrompt} onChange={e => setEditNegPrompt(e.target.value)} placeholder={t.detail.negPlaceholder} rows={3} className="!text-xs" />
+            <div className="detail-prompt-resize">
+              <Textarea value={editPrompt} onChange={e => setEditPrompt(e.target.value)} className="!text-xs !resize-none h-full" style={{ height: promptHeight }} />
+              <div
+                className="detail-prompt-resize-handle"
+                onPointerDown={event => startPromptResize('prompt', event)}
+                onPointerMove={handlePromptResizeMove}
+                onPointerUp={stopPromptResize}
+                onPointerCancel={stopPromptResize}
+              />
+            </div>
+            <div className="detail-prompt-resize">
+              <Textarea value={editNegPrompt} onChange={e => setEditNegPrompt(e.target.value)} placeholder={t.detail.negPlaceholder} className="!text-xs !resize-none h-full" style={{ height: negPromptHeight }} />
+              <div
+                className="detail-prompt-resize-handle"
+                onPointerDown={event => startPromptResize('neg', event)}
+                onPointerMove={handlePromptResizeMove}
+                onPointerUp={stopPromptResize}
+                onPointerCancel={stopPromptResize}
+              />
+            </div>
             <div className="flex gap-2">
               <Button size="sm" variant="primary" onClick={handleSavePrompt}>{t.detail.save}</Button>
               <Button size="sm" variant="ghost" onClick={() => setIsEditing(false)}>{t.detail.cancel}</Button>
@@ -413,7 +462,16 @@ export function ImageDetail({
           </div>
         ) : (
           // 只读模式
-          <Textarea readOnly value={prompt} rows={4} className="!text-xs !cursor-default !bg-ink-surface" />
+          <div className="detail-prompt-resize">
+            <Textarea readOnly value={prompt} className="!text-xs !cursor-text !resize-none h-full !bg-ink-surface" style={{ height: promptHeight }} />
+            <div
+              className="detail-prompt-resize-handle"
+              onPointerDown={event => startPromptResize('prompt', event)}
+              onPointerMove={handlePromptResizeMove}
+              onPointerUp={stopPromptResize}
+              onPointerCancel={stopPromptResize}
+            />
+          </div>
         )}
       </div>
 
@@ -426,7 +484,16 @@ export function ImageDetail({
               <span className="text-xs">{copiedField === 'negPrompt' ? t.detail.copied : t.detail.copy}</span>
             </Button>
           </div>
-          <Textarea readOnly value={negPrompt} rows={3} className="!text-xs !cursor-default !bg-ink-surface" />
+          <div className="detail-prompt-resize">
+            <Textarea readOnly value={negPrompt} className="!text-xs !cursor-text !resize-none h-full !bg-ink-surface" style={{ height: negPromptHeight }} />
+            <div
+              className="detail-prompt-resize-handle"
+              onPointerDown={event => startPromptResize('neg', event)}
+              onPointerMove={handlePromptResizeMove}
+              onPointerUp={stopPromptResize}
+              onPointerCancel={stopPromptResize}
+            />
+          </div>
         </div>
       )}
 
