@@ -21,7 +21,7 @@ export function Tag({ name, color = '#1A1A1A', active = false, count, onToggle, 
         'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-pill text-xs font-medium transition-all duration-150',
         'focus-ring',
         active
-          ? 'bg-ink text-ink-bg' // 激活态：前景/背景随主题反转
+          ? 'theme-active-control bg-ink text-ink-bg' // 激活态：前景/背景随主题反转
           : 'bg-ink-surface text-ink-secondary border border-ink-line hover:border-ink-muted hover:text-ink'
       )}
     >

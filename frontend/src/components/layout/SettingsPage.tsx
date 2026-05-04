@@ -182,7 +182,7 @@ export function SettingsPage({ open, onClose, themeMode, onThemeModeChange, back
                   onClick={() => onThemeModeChange(mode)}
                   className={`px-3 py-2 text-xs rounded-btn transition-colors ${
                     themeMode === mode
-                      ? 'bg-ink text-ink-bg font-medium'
+                      ? 'theme-active-control bg-ink text-ink-bg font-medium'
                       : 'text-ink-muted hover:text-ink hover:bg-ink-bg'
                   }`}
                 >

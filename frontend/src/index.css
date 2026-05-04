@@ -157,6 +157,28 @@
   .gallery-contain {
     contain: layout style;
   }
+
+  :root[data-theme="dark"] .theme-active-control {
+    background: rgb(var(--color-ink-accent-soft));
+    color: rgb(var(--color-ink));
+    border-color: rgb(var(--color-ink-line));
+  }
+
+  :root[data-theme="dark"] .theme-primary-button {
+    background: rgb(var(--color-ink-accent-soft));
+    color: rgb(var(--color-ink));
+    border-color: rgb(var(--color-ink-line));
+  }
+
+  :root[data-theme="dark"] .theme-primary-button:hover {
+    background: rgb(55 46 38);
+  }
+
+  :root[data-theme="dark"] .theme-soft-danger {
+    background: rgb(60 31 30 / 0.92);
+    color: rgb(252 165 165);
+    border-color: rgb(88 42 39);
+  }
 }
 
 @keyframes motion-fade-in {

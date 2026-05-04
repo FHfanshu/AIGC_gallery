@@ -91,7 +91,7 @@ export function Sidebar({
             onClick={() => onNavigate(v)}
             className={`text-left px-3 py-2 text-sm rounded-btn transition-colors duration-150 ${
               activeView === v
-                ? 'bg-ink text-ink-bg font-medium' // 当前激活样式
+                ? 'theme-active-control bg-ink text-ink-bg font-medium' // 当前激活样式
                 : 'text-ink-secondary hover:text-ink hover:bg-ink-surface'
             }`}
           >
@@ -111,7 +111,7 @@ export function Sidebar({
           className={`flex items-center justify-between w-full px-3 py-2 text-sm rounded-btn transition-colors ${
             hideNSFW
               ? 'text-ink-faint hover:text-ink-muted hover:bg-ink-surface'
-              : 'text-ink-danger bg-red-50 hover:bg-red-100'
+              : 'theme-soft-danger text-ink-danger bg-red-50 hover:bg-red-100'
           }`}
         >
           <span className="flex items-center gap-2">
@@ -190,7 +190,7 @@ export function Sidebar({
                   />
                   <button
                     onClick={handleAddNsfwTag}
-                    className="px-2.5 py-1.5 text-xs rounded-btn bg-ink text-ink-bg hover:bg-ink/90 transition-colors"
+                    className="theme-primary-button px-2.5 py-1.5 text-xs rounded-btn bg-ink text-ink-bg border border-ink hover:bg-ink/90 transition-colors"
                   >
                     {t.common.add}
                   </button>
@@ -231,7 +231,7 @@ export function Sidebar({
               onClick={() => onGalleryDensityChange(size)}
               className={`px-2 py-1.5 text-xs rounded-[8px] transition-colors ${
                 galleryDensity === size
-                  ? 'bg-ink text-ink-bg font-medium'
+                  ? 'theme-active-control bg-ink text-ink-bg font-medium'
                   : 'text-ink-muted hover:text-ink hover:bg-ink-bg'
               }`}
             >

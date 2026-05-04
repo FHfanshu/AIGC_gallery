@@ -20,7 +20,7 @@ export function Button({ variant = 'secondary', size = 'md', className, children
   };
 
   const variants = {
-    primary: 'bg-ink text-ink-bg hover:bg-ink/90 active:bg-ink/80',
+    primary: 'theme-primary-button bg-ink text-ink-bg border border-ink hover:bg-ink/90 active:bg-ink/80',
     secondary: 'bg-ink-bg text-ink border border-ink-line hover:border-ink-muted hover:text-ink active:bg-ink-surface',
     ghost: 'bg-transparent text-ink-muted hover:text-ink hover:bg-ink-surface',
     danger: 'bg-ink-danger text-white hover:bg-ink-danger/90 active:bg-ink-danger/80',
