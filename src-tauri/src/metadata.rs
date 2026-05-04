@@ -325,18 +325,19 @@ fn parse_comfyui_prompt(prompt: Option<&String>, meta: &mut ImageMetadata) {
         let Some(class_type) = node.get("class_type").and_then(|v| v.as_str()) else { continue; };
         let Some(inputs) = node.get("inputs") else { continue; };
 
-        match class_type {
-            "KSampler" | "KSamplerAdvanced" => {
-                parse_comfyui_sampler(inputs, meta);
-                if positive_ref.is_none() {
-                    positive_ref = parse_comfyui_node_ref(inputs.get("positive")).map(str::to_string);
-                }
-                if negative_ref.is_none() {
-                    negative_ref = parse_comfyui_node_ref(inputs.get("negative")).map(str::to_string);
-                }
+        if is_comfyui_sampler(class_type) {
+            parse_comfyui_sampler(inputs, meta);
+            if positive_ref.is_none() {
+                positive_ref = parse_comfyui_condition_ref(nodes, inputs, &["positive", "pos"]).map(str::to_string);
             }
-            "CheckpointLoaderSimple" | "UNETLoader" => parse_comfyui_model(inputs, meta),
-            _ => {}
+            if negative_ref.is_none() {
+                negative_ref = parse_comfyui_condition_ref(nodes, inputs, &["negative", "neg"]).map(str::to_string);
+            }
+        } else {
+            match class_type {
+                "CheckpointLoaderSimple" | "UNETLoader" => parse_comfyui_model(inputs, meta),
+                _ => {}
+            }
         }
 
         if let Some(group) = build_comfyui_parameter_group(node_id, class_type, inputs) {
@@ -344,11 +345,17 @@ fn parse_comfyui_prompt(prompt: Option<&String>, meta: &mut ImageMetadata) {
         }
     }
 
-    if let Some(node_id) = positive_ref.as_deref().and_then(|id| parse_comfyui_clip_text_by_id(nodes, id)) {
-        meta.prompt = node_id.to_string();
+    if let Some(text) = positive_ref.as_deref().and_then(|id| parse_comfyui_clip_text_by_id(nodes, id)) {
+        meta.prompt = text.to_string();
     }
-    if let Some(node_id) = negative_ref.as_deref().and_then(|id| parse_comfyui_clip_text_by_id(nodes, id)) {
-        meta.negative_prompt = node_id.to_string();
+    if let Some(text) = negative_ref.as_deref().and_then(|id| parse_comfyui_clip_text_by_id(nodes, id)) {
+        meta.negative_prompt = text.to_string();
+    }
+
+    // 有些复杂工作流会把 conditioning 接到广播节点，真实文本在另一条 STRING 分支上。
+    // 只有在快速引用链没有取到文本时才扫描全图，避免覆盖标准 ComfyUI 解析结果。
+    if meta.prompt.is_empty() || meta.negative_prompt.is_empty() {
+        search_comfyui_text_from_graph(nodes, meta);
     }
 
     // 完全没有 KSampler 引用时再回退到旧逻辑：按 CLIPTextEncode 出现顺序猜测正负向。
@@ -358,6 +365,49 @@ fn parse_comfyui_prompt(prompt: Option<&String>, meta: &mut ImageMetadata) {
             parse_comfyui_node(node, meta);
         }
     }
+}
+
+/// 判断是否为 ComfyUI 采样节点；兼容 easy-use 等自定义节点名。
+fn is_comfyui_sampler(class_type: &str) -> bool {
+    matches!(class_type, "KSampler" | "KSamplerAdvanced")
+        || class_type.to_lowercase().contains("ksampler")
+}
+
+/// 从采样器或管线节点追踪正/反向 conditioning 输入。
+fn parse_comfyui_condition_ref<'a>(
+    nodes: &'a serde_json::Map<String, serde_json::Value>,
+    inputs: &'a serde_json::Value,
+    keys: &[&str],
+) -> Option<&'a str> {
+    parse_comfyui_condition_ref_inner(nodes, inputs, keys, &mut Vec::new())
+}
+
+fn parse_comfyui_condition_ref_inner<'a>(
+    nodes: &'a serde_json::Map<String, serde_json::Value>,
+    inputs: &'a serde_json::Value,
+    keys: &[&str],
+    visited: &mut Vec<String>,
+) -> Option<&'a str> {
+    for key in keys {
+        if let Some(node_id) = parse_comfyui_node_ref(inputs.get(*key)) {
+            return Some(node_id);
+        }
+    }
+
+    let pipe_node_id = parse_comfyui_node_ref(inputs.get("pipe"))?;
+    if visited.iter().any(|id| id == pipe_node_id) {
+        return None;
+    }
+    visited.push(pipe_node_id.to_string());
+    let pipe_node = nodes.get(pipe_node_id)?;
+    let pipe_inputs = pipe_node.get("inputs")?;
+    for key in keys {
+        if let Some(node_id) = parse_comfyui_node_ref(pipe_inputs.get(*key)) {
+            return Some(node_id);
+        }
+    }
+
+    parse_comfyui_condition_ref_inner(nodes, pipe_inputs, keys, visited)
 }
 
 /// 提取 ComfyUI 节点引用数组中的节点 ID，如 ["12", 0]。
@@ -374,25 +424,150 @@ fn parse_comfyui_clip_text_by_id<'a>(
     nodes: &'a serde_json::Map<String, serde_json::Value>,
     node_id: &str,
 ) -> Option<&'a str> {
+    parse_comfyui_clip_text_by_id_inner(nodes, node_id, &mut Vec::new())
+}
+
+fn parse_comfyui_clip_text_by_id_inner<'a>(
+    nodes: &'a serde_json::Map<String, serde_json::Value>,
+    node_id: &str,
+    visited: &mut Vec<String>,
+) -> Option<&'a str> {
+    if visited.iter().any(|id| id == node_id) {
+        return None;
+    }
+    visited.push(node_id.to_string());
+
     let node = nodes.get(node_id)?;
     let inputs = node.get("inputs")?;
 
-    // 按优先级检查文本输入字段：text → positive → negative
-    for key in &["text", "positive", "negative"] {
+    // 按优先级检查常见文本输入字段。
+    for key in &["text", "positive", "negative", "prompt"] {
         if let Some(value) = inputs.get(*key) {
             // 直接字符串 → 返回
-            if let Some(s) = value.as_str() {
+            if let Some(s) = non_empty_prompt_text(value) {
                 return Some(s);
             }
             // 节点引用（数组如 ["27", 0]）→ 递归跟踪
             if let Some(ref_node_id) = value.as_array().and_then(|a| a.first()).and_then(|v| v.as_str()) {
-                if let Some(text) = parse_comfyui_clip_text_by_id(nodes, ref_node_id) {
+                if let Some(text) = parse_comfyui_clip_text_by_id_inner(nodes, ref_node_id, visited) {
+                    return Some(text);
+                }
+            }
+        }
+    }
+
+    // 兼容 CR Combine Prompt / promptReplace 等自定义节点的 part1-part4 等 STRING 输入。
+    if let Some(obj) = inputs.as_object() {
+        let mut entries: Vec<(&String, &serde_json::Value)> = obj.iter().collect();
+        entries.sort_by_key(|(key, _)| prompt_input_key_rank(key));
+        for (key, value) in entries {
+            if matches!(key.as_str(), "text" | "positive" | "negative" | "prompt") {
+                continue;
+            }
+            if !is_prompt_text_key(key) {
+                continue;
+            }
+            if let Some(s) = non_empty_prompt_text(value) {
+                return Some(s);
+            }
+            if let Some(ref_node_id) = value.as_array().and_then(|a| a.first()).and_then(|v| v.as_str()) {
+                if let Some(text) = parse_comfyui_clip_text_by_id_inner(nodes, ref_node_id, visited) {
                     return Some(text);
                 }
             }
         }
     }
     None
+}
+
+fn prompt_input_key_rank(key: &str) -> (u8, String) {
+    let lower = key.to_lowercase();
+    let rank = if lower == "prompt" {
+        0
+    } else if lower == "text" {
+        1
+    } else if lower.starts_with("part") {
+        2
+    } else if lower.contains("positive") {
+        3
+    } else if lower.contains("negative") {
+        4
+    } else {
+        5
+    };
+    (rank, lower)
+}
+
+fn is_prompt_text_key(key: &str) -> bool {
+    let lower = key.to_lowercase();
+    lower == "text"
+        || lower == "prompt"
+        || lower == "positive"
+        || lower == "negative"
+        || lower.starts_with("part")
+        || lower.contains("caption")
+}
+
+fn non_empty_prompt_text(value: &serde_json::Value) -> Option<&str> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty() && text.parse::<f64>().is_err() && text != &"None")
+}
+
+fn search_comfyui_text_from_graph(nodes: &serde_json::Map<String, serde_json::Value>, meta: &mut ImageMetadata) {
+    let mut positive = Vec::new();
+    let mut negative = Vec::new();
+    let mut node_entries: Vec<(&String, &serde_json::Value)> = nodes.iter().collect();
+    node_entries.sort_by_key(|(id, _)| id.parse::<u32>().unwrap_or(u32::MAX));
+
+    for (_node_id, node) in node_entries {
+        let class_type = node.get("class_type").and_then(|v| v.as_str()).unwrap_or_default();
+        let Some(inputs) = node.get("inputs").and_then(|v| v.as_object()) else { continue; };
+        let class_lower = class_type.to_lowercase();
+
+        let mut input_entries: Vec<(&String, &serde_json::Value)> = inputs.iter().collect();
+        input_entries.sort_by_key(|(key, _)| prompt_input_key_rank(key));
+        for (key, value) in input_entries {
+            if !is_prompt_text_key(key) {
+                continue;
+            }
+            let Some(text) = non_empty_prompt_text(value) else { continue; };
+            let key_lower = key.to_lowercase();
+            if class_lower.contains("neg") || key_lower.contains("negative") {
+                push_unique_prompt_text(&mut negative, text);
+            } else if class_lower.contains("prompt")
+                || class_lower.contains("showtext")
+                || key_lower == "text"
+                || key_lower == "prompt"
+                || key_lower == "positive"
+                || key_lower.starts_with("part")
+            {
+                push_unique_prompt_text(&mut positive, text);
+            }
+        }
+    }
+
+    if meta.prompt.is_empty() {
+        meta.prompt = select_graph_prompt_text(&positive);
+    }
+    if meta.negative_prompt.is_empty() {
+        meta.negative_prompt = select_graph_prompt_text(&negative);
+    }
+}
+
+fn push_unique_prompt_text(items: &mut Vec<String>, text: &str) {
+    if !items.iter().any(|item| item == text) {
+        items.push(text.to_string());
+    }
+}
+
+fn select_graph_prompt_text(items: &[String]) -> String {
+    items
+        .iter()
+        .max_by_key(|item| item.len())
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// 解析单个 ComfyUI 节点。
@@ -402,7 +577,7 @@ fn parse_comfyui_node(node: &serde_json::Value, meta: &mut ImageMetadata) {
 
     match class_type {
         "CLIPTextEncode" => parse_comfyui_clip(inputs, meta),
-        "KSampler" | "KSamplerAdvanced" => parse_comfyui_sampler(inputs, meta),
+        class_type if is_comfyui_sampler(class_type) => parse_comfyui_sampler(inputs, meta),
         "CheckpointLoaderSimple" | "UNETLoader" => parse_comfyui_model(inputs, meta),
         _ => {}
     }
@@ -705,4 +880,93 @@ pub(crate) fn detect_c2pa_gpt_image(c2pa_raw: &[u8], text_chunks: &HashMap<Strin
 pub fn get_image_dimensions(path: &Path) -> Result<(u32, u32), String> {
     let img = image::image_dimensions(path).map_err(|e| e.to_string())?;
     Ok(img)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_easy_use_pipe_positive_and_negative_refs() {
+        let mut raw = HashMap::new();
+        raw.insert(
+            "prompt".to_string(),
+            r#"{
+                "67": {"inputs": {"pos": ["73", 0], "neg": ["72", 0]}, "class_type": "easy pipeIn"},
+                "72": {"inputs": {"text": "bad anatomy"}, "class_type": "CLIPTextEncode"},
+                "73": {"inputs": {"text": "best quality"}, "class_type": "CLIPTextEncode"},
+                "87": {"inputs": {"steps": 20, "cfg": 4.5, "sampler_name": "er_sde", "seed": 123, "pipe": ["67", 0]}, "class_type": "easy fullkSampler"}
+            }"#.to_string(),
+        );
+
+        let meta = parse_comfyui_metadata(&raw);
+
+        assert_eq!(meta.prompt, "best quality");
+        assert_eq!(meta.negative_prompt, "bad anatomy");
+        assert_eq!(meta.steps, Some(20));
+        assert_eq!(meta.cfg_scale, Some(4.5));
+        assert_eq!(meta.sampler, "er_sde");
+        assert_eq!(meta.seed, Some(123));
+    }
+
+    #[test]
+    fn handles_broadcast_node_dead_end_with_graph_search() {
+        let mut raw = HashMap::new();
+        raw.insert(
+            "prompt".to_string(),
+            r#"{
+                "10": {"inputs": {"positive": "masterpiece, dragon boy", "negative": "low quality, watermark"}, "class_type": "easy a1111Loader"},
+                "36": {"inputs": {"anything": ["10", 0]}, "class_type": "Prompts Everywhere"},
+                "38": {"inputs": {"pos": ["36", 0], "neg": ["36", 0]}, "class_type": "easy pipeOut"},
+                "44": {"inputs": {"steps": 32, "cfg": 5.0, "sampler_name": "euler_ancestral", "seed": 670921399214688, "pipe": ["38", 0]}, "class_type": "easy fullkSampler"}
+            }"#.to_string(),
+        );
+
+        let meta = parse_comfyui_metadata(&raw);
+
+        assert_eq!(meta.prompt, "masterpiece, dragon boy");
+        assert_eq!(meta.negative_prompt, "low quality, watermark");
+        assert_eq!(meta.steps, Some(32));
+        assert_eq!(meta.cfg_scale, Some(5.0));
+        assert_eq!(meta.sampler, "euler_ancestral");
+        assert_eq!(meta.seed, Some(670921399214688));
+    }
+
+    #[test]
+    fn parses_weilin_prompt_nodes_via_graph_search() {
+        let mut raw = HashMap::new();
+        raw.insert(
+            "prompt".to_string(),
+            r#"{
+                "1": {"inputs": {"positive": "masterpiece, best quality"}, "class_type": "WeiLinComfyUIPromptAllInOneGreat"},
+                "2": {"inputs": {"negative": "outline, text, low quality"}, "class_type": "WeiLinComfyUIPromptAllInOneNeg"},
+                "6": {"inputs": {"part1": ["1", 0], "part2": "solo, dragon boy"}, "class_type": "CR Combine Prompt"},
+                "17": {"inputs": {"text": "masterpiece, best quality, solo, dragon boy"}, "class_type": "ShowText|pysssss"},
+                "36": {"inputs": {"anything": ["17", 0]}, "class_type": "Prompts Everywhere"},
+                "38": {"inputs": {"pos": ["36", 0], "neg": ["36", 0]}, "class_type": "easy pipeOut"},
+                "44": {"inputs": {"pipe": ["38", 0]}, "class_type": "easy fullkSampler"}
+            }"#.to_string(),
+        );
+
+        let meta = parse_comfyui_metadata(&raw);
+
+        assert_eq!(meta.prompt, "masterpiece, best quality, solo, dragon boy");
+        assert_eq!(meta.negative_prompt, "outline, text, low quality");
+    }
+
+    #[test]
+    fn parses_easy_a1111_loader_text_fields() {
+        let mut raw = HashMap::new();
+        raw.insert(
+            "prompt".to_string(),
+            r#"{
+                "10": {"inputs": {"positive": "cinematic lighting", "negative": "jpeg artifacts"}, "class_type": "easy a1111Loader"}
+            }"#.to_string(),
+        );
+
+        let meta = parse_comfyui_metadata(&raw);
+
+        assert_eq!(meta.prompt, "cinematic lighting");
+        assert_eq!(meta.negative_prompt, "jpeg artifacts");
+    }
 }

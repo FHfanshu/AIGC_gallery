@@ -115,6 +115,10 @@ export const api = {
   updatePrompt: (imageId: number, positivePrompt: string, negativePrompt: string) =>
     invoke('update_prompt', { imageId, positivePrompt, negativePrompt }),
 
+  /** 在系统文件管理器中定位图片文件 */
+  revealImageInFileManager: (imageId: number) =>
+    invoke<void>('reveal_image_in_file_manager', { imageId }),
+
   /** 重新解析图片文件中的 PNG 元数据并刷新数据库记录 */
   reparseImageMetadata: (imageId: number) =>
     invoke<ImageRecord>('reparse_image_metadata', { imageId }),

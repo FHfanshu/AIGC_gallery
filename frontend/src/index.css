@@ -210,6 +210,24 @@
     right: 34%;
     background: rgb(var(--color-ink-muted) / 0.9);
   }
+
+  .image-context-menu-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 7px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: rgb(var(--color-ink-secondary));
+    text-align: left;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+
+  .image-context-menu-item:hover {
+    background: rgb(var(--color-ink-surface));
+    color: rgb(var(--color-ink));
+  }
 }
 
 @keyframes motion-fade-in {

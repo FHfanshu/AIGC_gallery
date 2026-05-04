@@ -48,6 +48,7 @@ pub fn run() {
             commands::toggle_favorite,
             commands::get_favorites,
             commands::update_prompt,
+            commands::reveal_image_in_file_manager,
             commands::reparse_image_metadata,
             commands::start_reparse_all_metadata,
             commands::get_storage_config,

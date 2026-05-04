@@ -7,6 +7,7 @@ use crate::AppState;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 use base64::Engine;
@@ -151,6 +152,54 @@ pub fn update_prompt(
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.update_prompt(image_id, &positive_prompt, &negative_prompt)
+}
+
+/// 在系统文件管理器中定位图片文件。
+#[tauri::command]
+pub fn reveal_image_in_file_manager(
+    state: State<AppState>,
+    image_id: i64,
+) -> Result<(), String> {
+    let image = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_image_by_id(image_id)?
+    };
+
+    let file_path = image
+        .stored_path
+        .as_deref()
+        .filter(|path| !path.is_empty() && Path::new(path).exists())
+        .unwrap_or(&image.file_path);
+    let path = Path::new(file_path);
+    if !path.exists() {
+        return Err(format!("Image file not found: {}", file_path));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(format!("/select,{}", path.display()))
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let target = path.parent().unwrap_or(path);
+        Command::new("xdg-open")
+            .arg(target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 /// 按当前图片文件重新解析元数据，并写回数据库。

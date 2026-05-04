@@ -3,6 +3,7 @@
  * 展示单张图片的缩略图、来源标签和收藏按钮，支持懒加载缩略图
  */
 import { memo, useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { cn, getSourceLabel } from '../../lib/utils';
 import { api } from '../../lib/tauri';
 import { useI18n } from '../../i18n';
@@ -22,6 +23,7 @@ interface ImageCardProps {
 export const ImageCard = memo(function ImageCard({ image, selected, onClick, onToggleFavorite, onHideImage, isImageHidden, onUnhideImage }: ImageCardProps) {
   const [imgSrc, setImgSrc] = useState<string>('');
   const [loaded, setLoaded] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const { t } = useI18n();
   const cardRef = useRef<HTMLDivElement>(null);
   const source = getSourceLabel(image.source_type); // 获取来源配置（颜色/标签）
@@ -66,6 +68,34 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
     };
   }, [image.id, image.stored_path, image.file_path, image.thumbnail_path]);
 
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close();
+    };
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [contextMenu]);
+
+  const runContextAction = (action: () => void | Promise<void>) => {
+    setContextMenu(null);
+    void Promise.resolve(action()).catch(error => {
+      console.error('Image context action failed:', error);
+    });
+  };
+
+  const menuX = contextMenu ? Math.min(contextMenu.x, Math.max(8, window.innerWidth - 224)) : 0;
+  const menuY = contextMenu ? Math.min(contextMenu.y, Math.max(8, window.innerHeight - 180)) : 0;
+
   return (
     <div
       ref={cardRef}
@@ -76,6 +106,11 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
           : 'border-ink-line hover:border-ink-muted'
       )}
       onClick={onClick}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setContextMenu({ x: event.clientX, y: event.clientY });
+      }}
     >
       {/* 图片区域 */}
       <div className="relative aspect-square overflow-hidden bg-ink-surface">
@@ -192,6 +227,56 @@ export const ImageCard = memo(function ImageCard({ image, selected, onClick, onT
           {image.file_name}
         </p>
       </div>
+
+      {contextMenu && createPortal(
+        <div
+          className="fixed z-[1200] w-52 rounded-card border border-ink-line bg-ink-bg shadow-2xl p-1 motion-fade-in"
+          style={{ left: menuX, top: menuY }}
+          onPointerDown={event => event.stopPropagation()}
+          onContextMenu={event => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <button
+            type="button"
+            className="image-context-menu-item"
+            onClick={() => runContextAction(onClick)}
+          >
+            {t.header.openDetail}
+          </button>
+          <button
+            type="button"
+            className="image-context-menu-item"
+            onClick={() => runContextAction(() => onToggleFavorite(image.id))}
+          >
+            {image.is_favorite ? t.header.unfavorite : t.header.favorite}
+          </button>
+          <button
+            type="button"
+            className="image-context-menu-item"
+            onClick={() => runContextAction(() => api.revealImageInFileManager(image.id))}
+          >
+            {t.header.openInFileManager}
+          </button>
+          {onHideImage && onUnhideImage && (
+            <button
+              type="button"
+              className="image-context-menu-item"
+              onClick={() => runContextAction(() => {
+                if (isImageHidden?.(image.id)) {
+                  onUnhideImage(image.id);
+                } else {
+                  onHideImage(image.id);
+                }
+              })}
+            >
+              {isImageHidden?.(image.id) ? t.header.unhideImage : t.header.markAsNSFW}
+            </button>
+          )}
+        </div>,
+        document.body
+      )}
     </div>
   );
 });
